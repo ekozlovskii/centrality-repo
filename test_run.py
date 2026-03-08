@@ -1,22 +1,25 @@
 import networkx as nx
-from centrality.directed.directed_degree import InDegreeCentrality, OutDegreeCentrality
-from centrality.directed.pagerank import PageRankCentrality
+from centrality.classical.degree import DegreeCentrality
+from centrality.classical.closeness import ClosenessCentrality
+from centrality.classical.betweenness import BetweennessCentrality
+from centrality.classical.eigenvector import EigenvectorCentrality
+from utils.comparator import CentralityComparator
 
-# Создаём направленный граф
-DG = nx.scale_free_graph(50, seed=42)
+G = nx.karate_club_graph()
 
-idc = InDegreeCentrality(DG)
-idc.compute()
+dc = DegreeCentrality(G)
+cc = ClosenessCentrality(G)
+bc = BetweennessCentrality(G)
+ec = EigenvectorCentrality(G)
 
-odc = OutDegreeCentrality(DG)
-odc.compute()
+comp = CentralityComparator()
+comp.add("Degree", dc)
+comp.add("Closeness", cc)
+comp.add("Betweenness", bc)
+comp.add("Eigenvector", ec)
 
-pr = PageRankCentrality(DG)
-pr.compute()
+print("=== Top 10 Nodes ===")
+comp.top_nodes(10)
 
-print("=== Directed Indices Comparison ===")
-print(f"{'Node':<8} {'In-Degree':<12} {'Out-Degree':<12} {'PageRank':<12}")
-print("-" * 44)
-
-for node, score in pr.top_nodes(10):
-    print(f"{node:<8} {idc.scores[node]:<12.4f} {odc.scores[node]:<12.4f} {score:<12.4f}")
+comp.correlation_matrix()
+comp.plot_comparison(10)
