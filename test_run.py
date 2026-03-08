@@ -1,34 +1,22 @@
 import networkx as nx
-import random
-from centrality.classical.degree import DegreeCentrality, WeightedDegreeCentrality
-from centrality.classical.closeness import ClosenessCentrality
-from centrality.classical.betweenness import BetweennessCentrality
-from centrality.weighted.weighted_closeness import WeightedClosenessCentrality
-from centrality.weighted.weighted_betweenness import WeightedBetweennessCentrality
+from centrality.directed.directed_degree import InDegreeCentrality, OutDegreeCentrality
+from centrality.directed.pagerank import PageRankCentrality
 
-G = nx.karate_club_graph()
+# Создаём направленный граф
+DG = nx.scale_free_graph(50, seed=42)
 
-random.seed(42)
-for u, v in G.edges():
-    G[u][v]['weight'] = random.uniform(0.1, 5.0)
+idc = InDegreeCentrality(DG)
+idc.compute()
 
-# Классические
-bc = BetweennessCentrality(G)
-bc.compute()
+odc = OutDegreeCentrality(DG)
+odc.compute()
 
-# Взвешенные
-wdc = WeightedDegreeCentrality(G)
-wdc.compute()
+pr = PageRankCentrality(DG)
+pr.compute()
 
-wcc = WeightedClosenessCentrality(G)
-wcc.compute()
+print("=== Directed Indices Comparison ===")
+print(f"{'Node':<8} {'In-Degree':<12} {'Out-Degree':<12} {'PageRank':<12}")
+print("-" * 44)
 
-wbc = WeightedBetweennessCentrality(G)
-wbc.compute()
-
-print("=== Weighted Indices Comparison ===")
-print(f"{'Node':<8} {'W.Degree':<12} {'W.Closeness':<14} {'W.Betweenness':<14}")
-print("-" * 48)
-
-for node, score in wbc.top_nodes(10):
-    print(f"{node:<8} {wdc.scores[node]:<12.4f} {wcc.scores[node]:<14.4f} {score:<14.4f}")
+for node, score in pr.top_nodes(10):
+    print(f"{node:<8} {idc.scores[node]:<12.4f} {odc.scores[node]:<12.4f} {score:<12.4f}")
