@@ -2,16 +2,7 @@ from centrality.base import BaseCentrality
 import networkx as nx
 
 class BetweennessCentrality(BaseCentrality):
-    """
-    Betweenness Centrality — как часто вершина лежит на кратчайшем
-    пути между двумя другими вершинами.
-    
-    Формула: C(v) = sum( sigma(s,t|v) / sigma(s,t) ) для всех s != v != t
-    где sigma(s,t) — количество кратчайших путей между s и t,
-    sigma(s,t|v) — из них те что проходят через v.
-    
-    Идея: вершина центральна если она "мост" или "посредник" в сети.
-    """
+
 
     def compute(self) -> dict:
         n = self.graph.number_of_nodes()

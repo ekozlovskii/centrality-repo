@@ -2,11 +2,7 @@ from centrality.base import BaseCentrality
 import networkx as nx
 
 class DegreeCentrality(BaseCentrality):
-    """
-    Degree Centrality — нормализованное количество связей вершины.
-    Формула: C(v) = deg(v) / (N - 1)
-    где N — количество вершин в графе.
-    """
+
     
     def compute(self) -> dict:
         n = self.graph.number_of_nodes()
@@ -21,11 +17,7 @@ class DegreeCentrality(BaseCentrality):
 
 
 class WeightedDegreeCentrality(BaseCentrality):
-    """
-    Взвешенная версия — учитывает веса рёбер (strength centrality).
-    Формула: C(v) = sum(w_e) / (N - 1)
-    """
-    
+
     def compute(self) -> dict:
         n = self.graph.number_of_nodes()
         if n <= 1:

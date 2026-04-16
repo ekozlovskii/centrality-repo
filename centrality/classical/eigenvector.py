@@ -3,15 +3,7 @@ import networkx as nx
 import numpy as np
 
 class EigenvectorCentrality(BaseCentrality):
-    """
-    Eigenvector Centrality — centrality based on neighbor importance.
-    
-    Formula: C(v) = (1/lambda) * sum( C(u) ) for all u in neighbors(v)
-    where lambda is the largest eigenvalue of the adjacency matrix.
-    
-    Idea: a node is important if it is connected to other important nodes.
-    This is the same logic used by Google's PageRank.
-    """
+
 
     def __init__(self, graph, max_iter=1000, tol=1e-6):
         super().__init__(graph)

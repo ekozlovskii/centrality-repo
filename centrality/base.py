@@ -3,10 +3,6 @@ import networkx as nx
 import numpy as np
 
 class BaseCentrality(ABC):
-    """
-    Базовый класс для всех индексов центральности.
-    Все новые индексы наследуются от него.
-    """
     
     def __init__(self, graph: nx.Graph):
         self.graph = graph
@@ -14,11 +10,9 @@ class BaseCentrality(ABC):
     
     @abstractmethod
     def compute(self) -> dict:
-        """Вычислить индекс. Возвращает dict {node: score}"""
         pass
     
     def normalize(self, scores: dict) -> dict:
-        """Нормализация значений от 0 до 1"""
         values = list(scores.values())
         min_val, max_val = min(values), max(values)
         if max_val == min_val:
@@ -27,7 +21,6 @@ class BaseCentrality(ABC):
                 for k, v in scores.items()}
     
     def top_nodes(self, n: int = 5) -> list:
-        """Вернуть топ-N самых центральных вершин"""
         if not self.scores:
             self.compute()
         return sorted(self.scores.items(), 

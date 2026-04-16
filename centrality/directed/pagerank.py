@@ -2,17 +2,7 @@ from centrality.base import BaseCentrality
 import numpy as np
 
 class PageRankCentrality(BaseCentrality):
-    """
-    PageRank Centrality — probability that a random walker
-    following edges will land on this node.
-    
-    Formula: PR(v) = (1-d)/N + d * sum( PR(u)/out_degree(u) )
-    where d is damping factor (usually 0.85),
-    u are all nodes pointing to v.
-    
-    Idea: you are important if important nodes point to you.
-    This is the original Google search ranking algorithm.
-    """
+
 
     def __init__(self, graph, damping=0.85, max_iter=100, tol=1e-6):
         super().__init__(graph)

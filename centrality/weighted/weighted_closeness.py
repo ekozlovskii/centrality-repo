@@ -2,16 +2,7 @@ from centrality.base import BaseCentrality
 import networkx as nx
 
 class WeightedClosenessCentrality(BaseCentrality):
-    """
-    Weighted Closeness Centrality — closeness centrality that accounts
-    for edge weights as distances between nodes.
-    
-    Formula: C(v) = (N-1) / sum( d_w(v, u) ) for all u != v
-    where d_w(v, u) is the shortest weighted path between v and u.
-    
-    Note: higher weight = stronger connection = shorter distance.
-    We use 1/weight as the actual distance.
-    """
+
 
     def compute(self) -> dict:
         self.scores = {}

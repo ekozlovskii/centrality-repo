@@ -2,13 +2,7 @@ from centrality.base import BaseCentrality
 import networkx as nx
 
 class ClosenessCentrality(BaseCentrality):
-    """
-    Closeness Centrality — насколько вершина близка ко всем остальным.
-    Формула: C(v) = (N-1) / sum(d(v, u)) для всех u != v
-    где d(v, u) — длина кратчайшего пути между v и u.
-    
-    Идея: вершина центральна если она может быстро достичь всех остальных.
-    """
+
 
     def compute(self) -> dict:
         self.scores = {}

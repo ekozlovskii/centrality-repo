@@ -2,16 +2,7 @@ from centrality.base import BaseCentrality
 import networkx as nx
 
 class WeightedBetweennessCentrality(BaseCentrality):
-    """
-    Weighted Betweenness Centrality — betweenness that uses weighted
-    shortest paths instead of hop-count shortest paths.
 
-    Formula: C(v) = sum( sigma_w(s,t|v) / sigma_w(s,t) ) for all s != v != t
-    where sigma_w(s,t) is the number of weighted shortest paths between s and t,
-    sigma_w(s,t|v) is those passing through v.
-
-    Note: uses 1/weight as distance so stronger edges = shorter paths.
-    """
 
     def compute(self) -> dict:
         n = self.graph.number_of_nodes()
