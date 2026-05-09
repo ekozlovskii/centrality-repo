@@ -16,8 +16,23 @@ from centrality.classical.betweenness import BetweennessCentrality
 from centrality.classical.eigenvector import EigenvectorCentrality
 from centrality.weighted.weighted_closeness import WeightedClosenessCentrality
 from centrality.weighted.weighted_betweenness import WeightedBetweennessCentrality
-from centrality.directed.directed_degree import InDegreeCentrality, OutDegreeCentrality
+from centrality.weighted.weighted_eigenvector import WeightedEigenvectorCentrality
+from centrality.directed.directed_degree import (
+    InDegreeCentrality,
+    OutDegreeCentrality,
+    WeightedInDegreeCentrality,
+    WeightedOutDegreeCentrality,
+)
+from centrality.directed.directed_betweenness import DirectedBetweennessCentrality
 from centrality.directed.pagerank import PageRankCentrality
+from centrality.directed.directed_closeness import DirectedClosenessCentrality
+from centrality.directed.directed_weighted_closeness import DirectedWeightedClosenessCentrality
+from centrality.directed.directed_weighted_betweenness import DirectedWeightedBetweennessCentrality
+from centrality.directed.directed_eigenvector import (
+    DirectedEigenvectorCentrality,
+    DirectedWeightedEigenvectorCentrality,
+)
+from centrality.directed.weighted_pagerank import WeightedPageRankCentrality
 from utils.comparator import CentralityComparator
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -39,26 +54,155 @@ tab1, tab2, tab3, tab4 = st.tabs(["Analysis", "Compare Networks", "Node Impact",
 
 st.sidebar.header("Settings")
 
+GRAPH_OPTIONS = [
+    "Karate Club",
+    "Les Misérables",
+    "Florentine Families",
+    "Davis Women's Club",
+    "Petersen Graph",
+    "Random Graph",
+    "Upload CSV",
+]
+
+RANDOM_GRAPH_MODELS = [
+    "Erdős–Rényi",
+    "Barabási–Albert",
+    "Watts–Strogatz",
+    "Scale-Free Directed",
+]
+
 graph_option = st.sidebar.selectbox(
     "Select network",
-    ["Karate Club", "Les Misérables", "Random (Barabási–Albert)",
-     "Florentine Families", "Davis Women's Club", "Petersen Graph",
-     "Scale-Free Directed (Barabási–Albert)", "Upload CSV"]
+    GRAPH_OPTIONS
 )
+
+
+def random_graph_controls(container, key_prefix):
+    params = {}
+    with container.expander("Random graph parameters", expanded=True):
+        params["model"] = st.selectbox(
+            "Model",
+            RANDOM_GRAPH_MODELS,
+            key=f"{key_prefix}_random_model",
+        )
+        params["n"] = st.slider(
+            "Number of nodes",
+            min_value=5,
+            max_value=300,
+            value=50,
+            step=5,
+            key=f"{key_prefix}_random_n",
+        )
+        params["seed"] = st.number_input(
+            "Seed",
+            min_value=0,
+            max_value=1_000_000,
+            value=42,
+            step=1,
+            key=f"{key_prefix}_random_seed",
+        )
+
+        if params["model"] == "Erdős–Rényi":
+            params["p"] = st.slider(
+                "Edge probability",
+                min_value=0.01,
+                max_value=1.0,
+                value=0.08,
+                step=0.01,
+                key=f"{key_prefix}_er_p",
+            )
+        elif params["model"] == "Barabási–Albert":
+            max_m = max(1, min(20, params["n"] - 1))
+            params["m"] = st.slider(
+                "Edges per new node",
+                min_value=1,
+                max_value=max_m,
+                value=min(2, max_m),
+                step=1,
+                key=f"{key_prefix}_ba_m",
+            )
+        elif params["model"] == "Watts–Strogatz":
+            max_k = max(2, min(30, params["n"] - 1))
+            if max_k % 2 == 1:
+                max_k -= 1
+            params["k"] = st.slider(
+                "Nearest neighbors",
+                min_value=2,
+                max_value=max_k,
+                value=min(4, max_k),
+                step=2,
+                key=f"{key_prefix}_ws_k",
+            )
+            params["p"] = st.slider(
+                "Rewiring probability",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.20,
+                step=0.01,
+                key=f"{key_prefix}_ws_p",
+            )
+        else:
+            params["alpha"] = st.slider(
+                "Preferential attachment probability",
+                min_value=0.05,
+                max_value=0.90,
+                value=0.41,
+                step=0.01,
+                key=f"{key_prefix}_sf_alpha",
+            )
+            params["beta"] = st.slider(
+                "Internal edge probability",
+                min_value=0.05,
+                max_value=0.90,
+                value=0.54,
+                step=0.01,
+                key=f"{key_prefix}_sf_beta",
+            )
+            params["gamma"] = max(0.01, 1.0 - params["alpha"] - params["beta"])
+            st.caption(f"New-node incoming probability: {params['gamma']:.2f}")
+
+    return params
+
+
+analysis_random_params = None
+if graph_option == "Random Graph":
+    analysis_random_params = random_graph_controls(st.sidebar, "analysis")
 
 st.sidebar.header("Centrality Indices")
 
-DIRECTED_INDICES = {"In-Degree", "Out-Degree", "PageRank"}
-UNDIRECTED_INDICES = {"Degree", "Closeness", "Betweenness", "Eigenvector",
-                      "Weighted Degree", "Weighted Closeness", "Weighted Betweenness"}
+INDEX_GROUPS = {
+    "Classical": ["Degree", "Closeness", "Betweenness", "Eigenvector"],
+    "Weighted": [
+        "Weighted Degree", "Weighted Closeness",
+        "Weighted Betweenness", "Weighted Eigenvector"
+    ],
+    "Directed": [
+        "In-Degree", "Out-Degree", "Directed Closeness",
+        "Directed Betweenness", "Directed Eigenvector", "PageRank"
+    ],
+    "Directed Weighted": [
+        "Weighted In-Degree", "Weighted Out-Degree",
+        "Directed Weighted Closeness", "Directed Weighted Betweenness",
+        "Directed Weighted Eigenvector", "Weighted PageRank"
+    ],
+}
 
-selected = st.sidebar.multiselect(
-    "Select indices to compute",
-    ["Degree", "Closeness", "Betweenness", "Eigenvector",
-     "Weighted Degree", "Weighted Closeness", "Weighted Betweenness",
-     "In-Degree", "Out-Degree", "PageRank"],
-    default=["Degree", "Closeness", "Betweenness"]
-)
+DIRECTED_INDICES = set(INDEX_GROUPS["Directed"] + INDEX_GROUPS["Directed Weighted"])
+UNDIRECTED_INDICES = set(INDEX_GROUPS["Classical"] + INDEX_GROUPS["Weighted"])
+
+selected = []
+for group_name, group_indices in INDEX_GROUPS.items():
+    default_group = ["Degree", "Closeness", "Betweenness"] if group_name == "Classical" else []
+    with st.sidebar.expander(group_name, expanded=group_name == "Classical"):
+        selected.extend(
+            st.multiselect(
+                f"{group_name} indices",
+                group_indices,
+                default=default_group,
+                key=f"indices_{group_name.lower().replace(' ', '_')}",
+                label_visibility="collapsed",
+            )
+        )
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,27 +216,59 @@ INDEX_MAP = {
     "Weighted Degree": WeightedDegreeCentrality,
     "Weighted Closeness": WeightedClosenessCentrality,
     "Weighted Betweenness": WeightedBetweennessCentrality,
+    "Weighted Eigenvector": WeightedEigenvectorCentrality,
     "In-Degree": InDegreeCentrality,
     "Out-Degree": OutDegreeCentrality,
+    "Weighted In-Degree": WeightedInDegreeCentrality,
+    "Weighted Out-Degree": WeightedOutDegreeCentrality,
+    "Directed Closeness": DirectedClosenessCentrality,
+    "Directed Betweenness": DirectedBetweennessCentrality,
+    "Directed Eigenvector": DirectedEigenvectorCentrality,
+    "Directed Weighted Closeness": DirectedWeightedClosenessCentrality,
+    "Directed Weighted Betweenness": DirectedWeightedBetweennessCentrality,
+    "Directed Weighted Eigenvector": DirectedWeightedEigenvectorCentrality,
     "PageRank": PageRankCentrality,
+    "Weighted PageRank": WeightedPageRankCentrality,
 }
 
+def create_random_graph(params):
+    model = params.get("model", "Barabási–Albert")
+    n = int(params.get("n", 50))
+    seed = int(params.get("seed", 42))
+
+    if model == "Erdős–Rényi":
+        return nx.erdos_renyi_graph(n, params.get("p", 0.08), seed=seed)
+    if model == "Barabási–Albert":
+        m = min(int(params.get("m", 2)), n - 1)
+        return nx.barabasi_albert_graph(n, m, seed=seed)
+    if model == "Watts–Strogatz":
+        k = min(int(params.get("k", 4)), n - 1)
+        if k % 2 == 1:
+            k -= 1
+        return nx.watts_strogatz_graph(n, max(2, k), params.get("p", 0.20), seed=seed)
+
+    alpha = float(params.get("alpha", 0.41))
+    beta = float(params.get("beta", 0.54))
+    gamma = float(params.get("gamma", 0.05))
+    total = alpha + beta + gamma
+    alpha, beta, gamma = alpha / total, beta / total, gamma / total
+    return nx.scale_free_graph(n, alpha=alpha, beta=beta, gamma=gamma, seed=seed)
+
+
 @st.cache_data
-def load_graph(option, uploaded_file=None):
+def load_graph(option, uploaded_file=None, random_params=None):
     if option == "Karate Club":
         return nx.karate_club_graph()
     elif option == "Les Misérables":
         return nx.les_miserables_graph()
-    elif option == "Random (Barabási–Albert)":
-        return nx.barabasi_albert_graph(50, 2, seed=42)
     elif option == "Florentine Families":
         return nx.florentine_families_graph()
     elif option == "Davis Women's Club":
         return nx.davis_southern_women_graph()
     elif option == "Petersen Graph":
         return nx.petersen_graph()
-    elif option == "Scale-Free Directed (Barabási–Albert)":
-        return nx.scale_free_graph(50, seed=42)
+    elif option == "Random Graph":
+        return create_random_graph(random_params or {})
     elif option == "Upload CSV" and uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
         create_using = nx.DiGraph() if st.session_state.get("csv_directed", False) else nx.Graph()
@@ -133,7 +309,7 @@ def check_compatibility(G, selected):
     if not is_directed and directed_selected:
         warnings.append(
             f"⚠️ **{', '.join(directed_selected)}** require a **directed** graph. "
-            f"Please select **Scale-Free Directed** dataset or upload a directed CSV, "
+            f"Please select **Random Graph → Scale-Free Directed** or upload a directed CSV, "
             f"or remove these indices."
         )
     if is_directed and undirected_selected:
@@ -145,14 +321,25 @@ def check_compatibility(G, selected):
 
 def compute_all(G, selected):
     comp = CentralityComparator()
+    comp.failures = {}
     for name in selected:
         try:
             instance = INDEX_MAP[name](G)
             instance.compute()
             comp.add(name, instance)
-        except Exception:
-            pass  # пропускаем несовместимые индексы
+        except Exception as exc:
+            comp.failures[name] = str(exc)
     return comp
+
+
+def available_indices(selected, comp):
+    return [name for name in selected if name in comp.results]
+
+
+def show_compute_failures(comp):
+    if getattr(comp, "failures", None):
+        failed = ", ".join(comp.failures)
+        st.warning(f"Could not compute: {failed}. Please check graph type and edge weights.")
 
 def score_to_color(score, max_s):
     ratio = score / max_s if max_s > 0 else 0
@@ -161,7 +348,21 @@ def score_to_color(score, max_s):
     b = int(200 * (1 - ratio))
     return f"#{r:02x}{g:02x}{b:02x}"
 
-def build_pyvis(G, scores, selected, comp, highlight=None):
+def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
+    visual_options = visual_options or {}
+    node_count = G.number_of_nodes()
+    edge_count = G.number_of_edges()
+    large_mode = visual_options.get("large_mode", node_count > 100 or edge_count > 300)
+    show_labels = visual_options.get("show_labels", not large_mode)
+    show_edges = visual_options.get("show_edges", True)
+    node_scale = visual_options.get("node_scale", 0.65 if large_mode else 1.0)
+    edge_opacity = visual_options.get("edge_opacity", 0.08 if large_mode else 0.22)
+    edge_width = visual_options.get("edge_width", 0.5 if large_mode else 1.0)
+    stabilization_iterations = 400 if large_mode else 180
+    gravitational_constant = -9000 if large_mode else -3500
+    spring_length = 220 if large_mode else 150
+    spring_constant = 0.035 if large_mode else 0.05
+
     max_score = max(scores.values()) if scores else 1.0
     net = Network(height="620px", width="100%", bgcolor="#0f1117", font_color="white")
     
@@ -171,12 +372,20 @@ def build_pyvis(G, scores, selected, comp, highlight=None):
     {{
       "physics": {{
         "barnesHut": {{
-          "gravitationalConstant": -3000,
-          "centralGravity": 0.2,
-          "springLength": 150,
-          "springConstant": 0.05
+          "gravitationalConstant": {gravitational_constant},
+          "centralGravity": 0.12,
+          "springLength": {spring_length},
+          "springConstant": {spring_constant},
+          "avoidOverlap": 0.35
         }},
-        "stabilization": {{"iterations": 150}}
+        "minVelocity": 0.75,
+        "solver": "barnesHut",
+        "stabilization": {{
+          "enabled": true,
+          "iterations": {stabilization_iterations},
+          "updateInterval": 25,
+          "fit": true
+        }}
       }},
       "interaction": {{
         "zoomView": false,
@@ -188,7 +397,10 @@ def build_pyvis(G, scores, selected, comp, highlight=None):
       }},
       "edges": {{
         "smooth": false,
-        "color": {{"opacity": 0.3}},
+        "color": {{"color": "#9ca3af", "opacity": {edge_opacity}}},
+        "width": {edge_width},
+        "selectionWidth": 1,
+        "hoverWidth": 1,
         {arrows_option}
       }},
       "nodes": {{
@@ -200,7 +412,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None):
     
     for node in G.nodes():
         score = scores.get(node, 0.0)
-        size = 12 + score * 55
+        size = (8 + score * 42) * node_scale
         color = score_to_color(score, max_score)
         is_highlighted = highlight is not None and str(node) == str(highlight)
         tooltip_lines = [f"Node {node}"]
@@ -210,7 +422,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None):
         tooltip = "\n".join(tooltip_lines)
         net.add_node(
             str(node),
-            label=str(node),
+            label=str(node) if show_labels or is_highlighted else "",
             size=size * 1.8 if is_highlighted else size,
             color={
                 "background": "#ffdd00" if is_highlighted else color,
@@ -218,17 +430,133 @@ def build_pyvis(G, scores, selected, comp, highlight=None):
                 "highlight": {"background": "#ffdd00", "border": "#ff8800"}
             },
             title=tooltip,
-            font={"size": 14 if is_highlighted else 11, "color": "white"}
+            font={"size": 14 if is_highlighted else 10, "color": "white"}
         )
-    for u, v, data in G.edges(data=True):
-        w = data.get('weight', 1.0)
-        net.add_edge(str(u), str(v), value=w, color="#aaaaaa40", width=1)
+    if show_edges:
+        for u, v, data in G.edges(data=True):
+            net.add_edge(str(u), str(v), color=f"rgba(156, 163, 175, {edge_opacity})", width=edge_width)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode='w') as f:
         net.save_graph(f.name)
         tmp_path = f.name
     with open(tmp_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     os.unlink(tmp_path)
+    graph_style = """
+    <style>
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #0f1117 !important;
+        overflow: hidden !important;
+      }
+      #mynetwork {
+        border: 0 !important;
+        outline: 0 !important;
+        box-shadow: none !important;
+        background: #0f1117 !important;
+      }
+      .vis-network {
+        border: 0 !important;
+        outline: 0 !important;
+        background: #0f1117 !important;
+      }
+      canvas {
+        border: 0 !important;
+        outline: 0 !important;
+      }
+    </style>
+    """
+    fit_script = """
+    <script>
+      (function () {
+        var userInteracted = false;
+        var initialFitFinished = false;
+        var autoFitting = false;
+
+        function markUserInteracted() {
+          if (!autoFitting) {
+            userInteracted = true;
+            initialFitFinished = true;
+          }
+        }
+
+        function fitNetwork(force) {
+          if (userInteracted && !force) return;
+          if (typeof network === "undefined") return;
+          var container = document.getElementById("mynetwork");
+          if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return;
+          autoFitting = true;
+          network.fit({
+            animation: {
+              duration: 350,
+              easingFunction: "easeInOutQuad"
+            }
+          });
+          setTimeout(function () {
+            autoFitting = false;
+          }, 450);
+        }
+
+        if (typeof network !== "undefined") {
+          network.on("zoom", markUserInteracted);
+          network.on("dragStart", markUserInteracted);
+          network.on("selectNode", markUserInteracted);
+
+          network.once("stabilizationIterationsDone", function () {
+            fitNetwork(true);
+            setTimeout(function () { fitNetwork(false); }, 250);
+            setTimeout(function () { fitNetwork(false); }, 750);
+            setTimeout(function () {
+              network.setOptions({ physics: false });
+              initialFitFinished = true;
+            }, 900);
+          });
+          network.on("afterDrawing", function () {
+            if (!window.__centralityInitialFitDone) {
+              window.__centralityInitialFitDone = true;
+              setTimeout(function () { fitNetwork(false); }, 250);
+            }
+          });
+        }
+
+        window.addEventListener("load", function () {
+          setTimeout(function () { fitNetwork(false); }, 150);
+          setTimeout(function () { fitNetwork(false); }, 600);
+          setTimeout(function () {
+            fitNetwork(false);
+            initialFitFinished = true;
+          }, 1200);
+        });
+        window.addEventListener("resize", function () {
+          if (!userInteracted) {
+            setTimeout(function () { fitNetwork(false); }, 150);
+          }
+        });
+        document.addEventListener("visibilitychange", function () {
+          if (!userInteracted) {
+            setTimeout(function () { fitNetwork(false); }, 150);
+          }
+        });
+        document.addEventListener("mouseenter", function () {
+          if (!initialFitFinished && !userInteracted) {
+            setTimeout(function () { fitNetwork(false); }, 100);
+          }
+        });
+
+        var attempts = 0;
+        var interval = setInterval(function () {
+          fitNetwork(false);
+          attempts += 1;
+          if (attempts > 8 || userInteracted) {
+            initialFitFinished = true;
+            clearInterval(interval);
+          }
+        }, 500);
+      })();
+    </script>
+    """
+    html_content = html_content.replace("</head>", graph_style + "\n</head>")
+    html_content = html_content.replace("</body>", fit_script + "\n</body>")
     return html_content
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -265,7 +593,7 @@ with tab1:
         else:
             G = add_weights(nx.from_pandas_edgelist(df_upload, source=df_upload.columns[0], target=df_upload.columns[1], create_using=create_using))
     else:
-        G = add_weights(load_graph(graph_option))
+        G = add_weights(load_graph(graph_option, random_params=analysis_random_params))
 
     # Показываем тип графа
     graph_type = "Directed" if G.is_directed() else "Undirected"
@@ -273,260 +601,317 @@ with tab1:
 
     if not selected:
         st.warning("Please select at least one centrality index.")
-        st.stop()
-
-    # Проверка совместимости
-    warnings = check_compatibility(G, selected)
-    for w in warnings:
-        st.warning(w)
-
-    # Фильтруем только совместимые индексы
-    valid_selected = []
-    for s in selected:
-        if s in DIRECTED_INDICES and not G.is_directed():
-            continue
-        valid_selected.append(s)
-
-    if not valid_selected:
-        st.error("No compatible indices selected for this graph type. Please adjust your selection.")
     else:
-        comp = compute_all(G, valid_selected)
+        # Проверка совместимости
+        warnings = check_compatibility(G, selected)
+        for w in warnings:
+            st.warning(w)
 
-        # Network overview
-        st.subheader("Network Overview")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Nodes", G.number_of_nodes())
-        col2.metric("Edges", G.number_of_edges())
-        col3.metric("Density", f"{nx.density(G):.4f}")
-        col4.metric("Type", graph_type)
+        # Фильтруем только совместимые индексы
+        valid_selected = []
+        for s in selected:
+            if s in DIRECTED_INDICES and not G.is_directed():
+                continue
+            valid_selected.append(s)
 
-        # Top nodes table
-        st.subheader("Top Nodes")
-        total_nodes = G.number_of_nodes()
+        if not valid_selected:
+            st.error("No compatible indices selected for this graph type. Please adjust your selection.")
+        else:
+            comp = compute_all(G, valid_selected)
+            show_compute_failures(comp)
+            valid_selected = available_indices(valid_selected, comp)
 
-        col_empty, col_sl, col_dec = st.columns([3, 2, 2])
-        with col_sl:
-            top_n = st.slider(
-                "Number of top nodes to display",
-                min_value=1,
-                max_value=total_nodes,
-                value=total_nodes,
-                step=1
-            )
-        with col_dec:
-            decimal_places = st.selectbox(
-                "Decimals", [2, 3, 4, 5, 6], index=2
-            )
+            if not valid_selected:
+                st.error("No selected indices could be computed for this graph.")
+            else:
 
-        first_scores = comp.results[valid_selected[0]]
-        top_nodes = sorted(first_scores.items(), key=lambda x: -x[1])[:top_n]
-        top_node_ids = [n for n, _ in top_nodes]
+                # Network overview
+                st.subheader("Network Overview")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Nodes", G.number_of_nodes())
+                col2.metric("Edges", G.number_of_edges())
+                col3.metric("Density", f"{nx.density(G):.4f}")
+                col4.metric("Type", graph_type)
 
-        rows = []
-        for node in top_node_ids:
-            row = {"Node": str(node)}
-            for name in valid_selected:
-                row[name] = round(comp.results[name].get(node, 0.0), 4)
-            rows.append(row)
+                # Top nodes table
+                st.subheader("Top Nodes")
+                total_nodes = G.number_of_nodes()
 
-        df_results = pd.DataFrame(rows)
-        df_display = df_results.copy()
-        for col in df_display.columns:
-            if col != "Node":
-                df_display[col] = df_display[col].apply(lambda x: round(float(x), decimal_places))
-
-        df_display.index = range(1, len(df_display) + 1)
-        st.dataframe(df_display, use_container_width=True)
-
-        csv = df_results.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="⬇️ Download results as CSV",
-            data=csv,
-            file_name="centrality_results.csv",
-            mime="text/csv"
-        )
-
-        # Bar chart
-        st.subheader("Centrality Comparison Chart")
-        fig_bar = go.Figure()
-        colors = px.colors.qualitative.Plotly
-        for i, name in enumerate(valid_selected):
-            values = [comp.results[name].get(node, 0.0) for node in top_node_ids]
-            fig_bar.add_trace(go.Bar(
-                name=name,
-                x=[str(n) for n in top_node_ids],
-                y=values,
-                marker_color=colors[i % len(colors)],
-                hovertemplate=f"<b>{name}</b><br>Node: %{{x}}<br>Score: %{{y:.4f}}<extra></extra>"
-            ))
-        fig_bar.update_layout(
-            barmode='group',
-            xaxis_title="Node",
-            yaxis_title="Centrality Score",
-            title="Centrality Indices Comparison",
-            legend_title="Index",
-            hovermode="x unified",
-            height=450,
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-        # Network graph
-        st.subheader("Interactive Network Graph")
-        col_graph1, col_graph2, col_graph3 = st.columns([3, 2, 2])
-        with col_graph1:
-            st.markdown(f"Node size and color reflect **{valid_selected[0]}** centrality.")
-        with col_graph2:
-            filter_top = st.slider(
-                "Show top N nodes",
-                min_value=1,
-                max_value=G.number_of_nodes(),
-                value=G.number_of_nodes(),
-                step=1
-            )
-        with col_graph3:
-            highlight_node = st.text_input(
-                "Highlight node",
-                value="",
-                placeholder="e.g. 0"
-            )
-
-        scores = comp.results[valid_selected[0]]
-        top_nodes_filter = set(
-            node for node, _ in sorted(scores.items(), key=lambda x: -x[1])[:filter_top]
-        )
-        G_filtered = G.subgraph(top_nodes_filter).copy()
-        scores_filtered = {node: scores[node] for node in top_nodes_filter}
-
-        comp_filtered = CentralityComparator()
-        for name in valid_selected:
-            try:
-                instance = INDEX_MAP[name](G_filtered)
-                instance.compute()
-                comp_filtered.add(name, instance)
-            except Exception:
-                pass
-
-        st.markdown(f"Showing **{filter_top}** of **{G.number_of_nodes()}** nodes.")
-
-        try:
-            hl = int(highlight_node) if highlight_node else None
-        except ValueError:
-            hl = highlight_node if highlight_node else None
-
-        html_content = build_pyvis(G_filtered, scores_filtered, valid_selected, comp_filtered, highlight=hl)
-        components.html(html_content, height=640, scrolling=False)
-
-        # Correlation matrix
-        if len(valid_selected) > 1:
-            st.subheader("Correlation Matrix")
-            nodes_list = list(G.nodes())
-            matrix = np.array([
-                [comp.results[name][node] for node in nodes_list]
-                for name in valid_selected
-            ])
-            corr = np.corrcoef(matrix)
-            fig_corr = go.Figure(data=go.Heatmap(
-                z=corr,
-                x=valid_selected,
-                y=valid_selected,
-                colorscale="RdBu",
-                zmin=-1, zmax=1,
-                text=[[f"{corr[i][j]:.2f}" for j in range(len(valid_selected))]
-                    for i in range(len(valid_selected))],
-                texttemplate="%{text}",
-                textfont={"size": 14},
-                hovertemplate="<b>%{y} vs %{x}</b><br>Correlation: %{z:.3f}<extra></extra>"
-            ))
-            fig_corr.update_layout(
-                title="Pearson Correlation between Centrality Indices",
-                height=420,
-            )
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-        # Node inspector
-        st.subheader("Node Inspector")
-        selected_node = st.selectbox(
-            "Select a node to inspect",
-            options=sorted(G.nodes())
-        )
-
-        if selected_node is not None:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Node {selected_node} — Centrality Scores**")
-                rows_inspector = []
-                for name in valid_selected:
-                    score = comp.results[name].get(selected_node, 0.0)
-                    all_scores = list(comp.results[name].values())
-                    avg = np.mean(all_scores)
-                    diff_pct = ((score - avg) / avg * 100) if avg > 0 else 0
-                    percentile = int(np.sum(np.array(all_scores) <= score) / len(all_scores) * 100)
-                    rows_inspector.append({
-                        "Index": name,
-                        "Score": round(score, 4),
-                        "Avg": round(avg, 4),
-                        "vs Avg": f"{diff_pct:+.1f}%",
-                        "Percentile": f"{percentile}th"
-                    })
-                st.dataframe(
-                    pd.DataFrame(rows_inspector),
-                    use_container_width=True,
-                    hide_index=True
-                )
-                st.markdown("**Neighbors**")
-                neighbors = list(G.neighbors(selected_node))
-                st.metric("Degree", len(neighbors))
-                st.write(f"Connected to: {neighbors}")
-
-            with col2:
-                if len(valid_selected) >= 3:
-                    categories = valid_selected
-                    values = [comp.results[name].get(selected_node, 0.0) for name in valid_selected]
-                    avg_values = [np.mean(list(comp.results[name].values())) for name in valid_selected]
-
-                    fig_radar = go.Figure()
-                    fig_radar.add_trace(go.Scatterpolar(
-                        r=avg_values + [avg_values[0]],
-                        theta=categories + [categories[0]],
-                        fill='toself',
-                        fillcolor='rgba(150,150,150,0.15)',
-                        line=dict(color='#888888', width=1, dash='dash'),
-                        name='Network Average'
-                    ))
-                    fig_radar.add_trace(go.Scatterpolar(
-                        r=values + [values[0]],
-                        theta=categories + [categories[0]],
-                        fill='toself',
-                        fillcolor='rgba(99, 110, 250, 0.3)',
-                        line=dict(color='#636EFA', width=2),
-                        marker=dict(size=6),
-                        name=f"Node {selected_node}"
-                    ))
-                    fig_radar.update_layout(
-                        polar=dict(
-                            radialaxis=dict(
-                                visible=True,
-                                range=[0, max(
-                                    max(comp.results[name].values())
-                                    for name in valid_selected
-                                )],
-                                gridcolor="#333333",
-                                linecolor="#333333",
-                            ),
-                            angularaxis=dict(gridcolor="#333333"),
-                            bgcolor="#1a1a2e"
-                        ),
-                        showlegend=True,
-                        legend=dict(x=0.8, y=1.1),
-                        title=f"Node {selected_node} vs Network Average",
-                        height=380,
+                col_empty, col_sl, col_dec = st.columns([3, 2, 2])
+                with col_sl:
+                    top_n = st.slider(
+                        "Number of top nodes to display",
+                        min_value=1,
+                        max_value=total_nodes,
+                        value=total_nodes,
+                        step=1
                     )
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                else:
-                    st.info("Select 3 or more indices to see the radar chart.")
+                with col_dec:
+                    decimal_places = st.selectbox(
+                        "Decimals", [2, 3, 4, 5, 6], index=2
+                    )
 
-        st.markdown("---")
-        st.markdown("*Network Centrality Analyzer — Bachelor's Thesis Project*")
+                first_scores = comp.results[valid_selected[0]]
+                top_nodes = sorted(first_scores.items(), key=lambda x: -x[1])[:top_n]
+                top_node_ids = [n for n, _ in top_nodes]
+
+                rows = []
+                for node in top_node_ids:
+                    row = {"Node": str(node)}
+                    for name in valid_selected:
+                        row[name] = round(comp.results[name].get(node, 0.0), 4)
+                    rows.append(row)
+
+                df_results = pd.DataFrame(rows)
+                df_display = df_results.copy()
+                for col in df_display.columns:
+                    if col != "Node":
+                        df_display[col] = df_display[col].apply(lambda x: round(float(x), decimal_places))
+
+                df_display.index = range(1, len(df_display) + 1)
+                st.dataframe(df_display, use_container_width=True)
+
+                csv = df_results.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="⬇️ Download results as CSV",
+                    data=csv,
+                    file_name="centrality_results.csv",
+                    mime="text/csv"
+                )
+
+                # Bar chart
+                st.subheader("Centrality Comparison Chart")
+                fig_bar = go.Figure()
+                colors = px.colors.qualitative.Plotly
+                for i, name in enumerate(valid_selected):
+                    values = [comp.results[name].get(node, 0.0) for node in top_node_ids]
+                    fig_bar.add_trace(go.Bar(
+                        name=name,
+                        x=[str(n) for n in top_node_ids],
+                        y=values,
+                        marker_color=colors[i % len(colors)],
+                        hovertemplate=f"<b>{name}</b><br>Node: %{{x}}<br>Score: %{{y:.4f}}<extra></extra>"
+                    ))
+                fig_bar.update_layout(
+                    barmode='group',
+                    xaxis_title="Node",
+                    yaxis_title="Centrality Score",
+                    title="Centrality Indices Comparison",
+                    legend_title="Index",
+                    hovermode="x unified",
+                    height=450,
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # Network graph
+                st.subheader("Interactive Network Graph")
+                large_graph_default = G.number_of_nodes() > 100 or G.number_of_edges() > 300
+                col_graph1, col_graph2, col_graph3 = st.columns([3, 2, 2])
+                with col_graph1:
+                    st.markdown(f"Node size and color reflect **{valid_selected[0]}** centrality.")
+                with col_graph2:
+                    filter_top = st.slider(
+                        "Show top N nodes",
+                        min_value=1,
+                        max_value=G.number_of_nodes(),
+                        value=min(G.number_of_nodes(), 80) if large_graph_default else G.number_of_nodes(),
+                        step=1
+                    )
+                with col_graph3:
+                    highlight_node = st.text_input(
+                        "Highlight node",
+                        value="",
+                        placeholder="e.g. 0"
+                    )
+
+                with st.expander("Graph display settings", expanded=large_graph_default):
+                    col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+                    with col_v1:
+                        large_mode = st.checkbox(
+                            "Large graph mode",
+                            value=large_graph_default,
+                            help="Reduces node size, edge opacity, and freezes physics after layout stabilization.",
+                        )
+                    with col_v2:
+                        show_labels = st.checkbox(
+                            "Show node labels",
+                            value=not large_graph_default,
+                        )
+                    with col_v3:
+                        show_edges = st.checkbox(
+                            "Show edges",
+                            value=True,
+                        )
+                    with col_v4:
+                        node_scale = st.slider(
+                            "Node size",
+                            min_value=0.4,
+                            max_value=1.4,
+                            value=0.65 if large_graph_default else 1.0,
+                            step=0.05,
+                        )
+                    edge_opacity = st.slider(
+                        "Edge opacity",
+                        min_value=0.02,
+                        max_value=0.35,
+                        value=0.08 if large_graph_default else 0.22,
+                        step=0.01,
+                    )
+                    if G.number_of_nodes() > 120 and filter_top == G.number_of_nodes():
+                        st.info("For large graphs, filtering to top nodes or hiding labels usually makes the network easier to read.")
+
+                visual_options = {
+                    "large_mode": large_mode,
+                    "show_labels": show_labels,
+                    "show_edges": show_edges,
+                    "node_scale": node_scale,
+                    "edge_opacity": edge_opacity,
+                }
+
+                scores = comp.results[valid_selected[0]]
+                top_nodes_filter = set(
+                    node for node, _ in sorted(scores.items(), key=lambda x: -x[1])[:filter_top]
+                )
+                G_filtered = G.subgraph(top_nodes_filter).copy()
+                scores_filtered = {node: scores[node] for node in top_nodes_filter}
+
+                comp_filtered = CentralityComparator()
+                for name in valid_selected:
+                    try:
+                        instance = INDEX_MAP[name](G_filtered)
+                        instance.compute()
+                        comp_filtered.add(name, instance)
+                    except Exception:
+                        pass
+
+                st.markdown(f"Showing **{filter_top}** of **{G.number_of_nodes()}** nodes.")
+
+                try:
+                    hl = int(highlight_node) if highlight_node else None
+                except ValueError:
+                    hl = highlight_node if highlight_node else None
+
+                html_content = build_pyvis(
+                    G_filtered,
+                    scores_filtered,
+                    valid_selected,
+                    comp_filtered,
+                    highlight=hl,
+                    visual_options=visual_options,
+                )
+                components.html(html_content, height=640, scrolling=False)
+
+                # Correlation matrix
+                if len(valid_selected) > 1:
+                    st.subheader("Correlation Matrix")
+                    nodes_list = list(G.nodes())
+                    matrix = np.array([
+                        [comp.results[name][node] for node in nodes_list]
+                        for name in valid_selected
+                    ])
+                    corr = np.corrcoef(matrix)
+                    fig_corr = go.Figure(data=go.Heatmap(
+                        z=corr,
+                        x=valid_selected,
+                        y=valid_selected,
+                        colorscale="RdBu",
+                        zmin=-1, zmax=1,
+                        text=[[f"{corr[i][j]:.2f}" for j in range(len(valid_selected))]
+                            for i in range(len(valid_selected))],
+                        texttemplate="%{text}",
+                        textfont={"size": 14},
+                        hovertemplate="<b>%{y} vs %{x}</b><br>Correlation: %{z:.3f}<extra></extra>"
+                    ))
+                    fig_corr.update_layout(
+                        title="Pearson Correlation between Centrality Indices",
+                        height=420,
+                    )
+                    st.plotly_chart(fig_corr, use_container_width=True)
+
+                # Node inspector
+                st.subheader("Node Inspector")
+                selected_node = st.selectbox(
+                    "Select a node to inspect",
+                    options=sorted(G.nodes())
+                )
+
+                if selected_node is not None:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"**Node {selected_node} — Centrality Scores**")
+                        rows_inspector = []
+                        for name in valid_selected:
+                            score = comp.results[name].get(selected_node, 0.0)
+                            all_scores = list(comp.results[name].values())
+                            avg = np.mean(all_scores)
+                            diff_pct = ((score - avg) / avg * 100) if avg > 0 else 0
+                            percentile = int(np.sum(np.array(all_scores) <= score) / len(all_scores) * 100)
+                            rows_inspector.append({
+                                "Index": name,
+                                "Score": round(score, 4),
+                                "Avg": round(avg, 4),
+                                "vs Avg": f"{diff_pct:+.1f}%",
+                                "Percentile": f"{percentile}th"
+                            })
+                        st.dataframe(
+                            pd.DataFrame(rows_inspector),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        st.markdown("**Neighbors**")
+                        neighbors = list(G.neighbors(selected_node))
+                        st.metric("Degree", len(neighbors))
+                        st.write(f"Connected to: {neighbors}")
+
+                    with col2:
+                        if len(valid_selected) >= 3:
+                            categories = valid_selected
+                            values = [comp.results[name].get(selected_node, 0.0) for name in valid_selected]
+                            avg_values = [np.mean(list(comp.results[name].values())) for name in valid_selected]
+
+                            fig_radar = go.Figure()
+                            fig_radar.add_trace(go.Scatterpolar(
+                                r=avg_values + [avg_values[0]],
+                                theta=categories + [categories[0]],
+                                fill='toself',
+                                fillcolor='rgba(150,150,150,0.15)',
+                                line=dict(color='#888888', width=1, dash='dash'),
+                                name='Network Average'
+                            ))
+                            fig_radar.add_trace(go.Scatterpolar(
+                                r=values + [values[0]],
+                                theta=categories + [categories[0]],
+                                fill='toself',
+                                fillcolor='rgba(99, 110, 250, 0.3)',
+                                line=dict(color='#636EFA', width=2),
+                                marker=dict(size=6),
+                                name=f"Node {selected_node}"
+                            ))
+                            fig_radar.update_layout(
+                                polar=dict(
+                                    radialaxis=dict(
+                                        visible=True,
+                                        range=[0, max(
+                                            max(comp.results[name].values())
+                                            for name in valid_selected
+                                        )],
+                                        gridcolor="#333333",
+                                        linecolor="#333333",
+                                    ),
+                                    angularaxis=dict(gridcolor="#333333"),
+                                    bgcolor="#1a1a2e"
+                                ),
+                                showlegend=True,
+                                legend=dict(x=0.8, y=1.1),
+                                title=f"Node {selected_node} vs Network Average",
+                                height=380,
+                            )
+                            st.plotly_chart(fig_radar, use_container_width=True)
+                        else:
+                            st.info("Select 3 or more indices to see the radar chart.")
+
+                st.markdown("---")
+                st.markdown("*Network Centrality Analyzer — Bachelor's Thesis Project*")
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 2 — COMPARE NETWORKS
@@ -541,9 +926,7 @@ with tab2:
         st.markdown("### Network A")
         graph_a = st.selectbox(
             "Select Network A",
-            ["Karate Club", "Les Misérables", "Random (Barabási–Albert)",
-            "Florentine Families", "Davis Women's Club", "Petersen Graph",
-            "Scale-Free Directed (Barabási–Albert)", "Upload CSV"],
+            GRAPH_OPTIONS,
             key="graph_a"
         )
         if graph_a == "Upload CSV":
@@ -552,14 +935,13 @@ with tab2:
         else:
             uploaded_a = None
             csv_directed_a = False
+        random_params_a = random_graph_controls(st, "compare_a") if graph_a == "Random Graph" else None
 
     with col_b:
         st.markdown("### Network B")
         graph_b = st.selectbox(
             "Select Network B",
-            ["Karate Club", "Les Misérables", "Random (Barabási–Albert)",
-            "Florentine Families", "Davis Women's Club", "Petersen Graph",
-            "Scale-Free Directed (Barabási–Albert)", "Upload CSV"],
+            GRAPH_OPTIONS,
             index=1,
             key="graph_b"
         )
@@ -569,10 +951,13 @@ with tab2:
         else:
             uploaded_b = None
             csv_directed_b = False
+        random_params_b = random_graph_controls(st, "compare_b") if graph_b == "Random Graph" else None
 
     if not selected:
         st.warning("Please select at least one centrality index in the sidebar.")
     else:
+        compare_ready = True
+
         if graph_a == "Upload CSV":
             if uploaded_a is not None:
                 df_a = pd.read_csv(uploaded_a)
@@ -583,9 +968,9 @@ with tab2:
                     GA = add_weights(nx.from_pandas_edgelist(df_a, source=df_a.columns[0], target=df_a.columns[1], create_using=create_a))
             else:
                 st.warning("Please upload a CSV file for Network A.")
-                st.stop()
+                compare_ready = False
         else:
-            GA = add_weights(load_graph(graph_a))
+            GA = add_weights(load_graph(graph_a, random_params=random_params_a))
 
         if graph_b == "Upload CSV":
             if uploaded_b is not None:
@@ -597,45 +982,65 @@ with tab2:
                     GB = add_weights(nx.from_pandas_edgelist(df_b, source=df_b.columns[0], target=df_b.columns[1], create_using=create_b))
             else:
                 st.warning("Please upload a CSV file for Network B.")
-                st.stop()
+                compare_ready = False
         else:
-            GB = add_weights(load_graph(graph_b))
+            GB = add_weights(load_graph(graph_b, random_params=random_params_b))
 
-        warnings_a = check_compatibility(GA, selected)
-        warnings_b = check_compatibility(GB, selected)
-        for w in warnings_a:
-            st.warning(f"Network A: {w}")
-        for w in warnings_b:
-            st.warning(f"Network B: {w}")
+        if compare_ready:
+            warnings_a = check_compatibility(GA, selected)
+            warnings_b = check_compatibility(GB, selected)
+            for w in warnings_a:
+                st.warning(f"Network A: {w}")
+            for w in warnings_b:
+                st.warning(f"Network B: {w}")
 
-        valid_a = [s for s in selected if not (s in DIRECTED_INDICES and not GA.is_directed())]
-        valid_b = [s for s in selected if not (s in DIRECTED_INDICES and not GB.is_directed())]
-        
-        if not valid_a:
-            st.warning("Network A: no compatible indices for this graph type. Please adjust your selection.")
-            st.stop()
-        if not valid_b:
-            st.warning("Network B: no compatible indices for this graph type. Please adjust your selection.")
-            st.stop()
+            valid_a = [s for s in selected if not (s in DIRECTED_INDICES and not GA.is_directed())]
+            valid_b = [s for s in selected if not (s in DIRECTED_INDICES and not GB.is_directed())]
 
-        comp_a = compute_all(GA, valid_a)
-        comp_b = compute_all(GB, valid_b)
+            if not valid_a:
+                st.warning("Network A: no compatible indices for this graph type. Please adjust your selection.")
+                compare_ready = False
+            if not valid_b:
+                st.warning("Network B: no compatible indices for this graph type. Please adjust your selection.")
+                compare_ready = False
 
-        st.subheader("Network Overview")
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("A — Nodes", GA.number_of_nodes())
-        c2.metric("A — Edges", GA.number_of_edges())
-        c3.metric("A — Density", f"{nx.density(GA):.4f}")
-        c4.metric("B — Nodes", GB.number_of_nodes())
-        c5.metric("B — Edges", GB.number_of_edges())
-        c6.metric("B — Density", f"{nx.density(GB):.4f}")
+        if compare_ready:
+            comp_a = compute_all(GA, valid_a)
+            comp_b = compute_all(GB, valid_b)
+            show_compute_failures(comp_a)
+            show_compute_failures(comp_b)
+            valid_a = available_indices(valid_a, comp_a)
+            valid_b = available_indices(valid_b, comp_b)
 
-        top_n_compare = st.slider("Top N nodes", min_value=1, max_value=min(GA.number_of_nodes(), GB.number_of_nodes()), value=10, step=1)
-        st.subheader("Top Nodes Comparison")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"**{graph_a}** ({'Directed' if GA.is_directed() else 'Undirected'})")
-            if valid_a:
+            if not valid_a:
+                st.warning("Network A: no selected indices could be computed.")
+                compare_ready = False
+            if not valid_b:
+                st.warning("Network B: no selected indices could be computed.")
+                compare_ready = False
+
+        if compare_ready:
+            st.subheader("Network Overview")
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("A — Nodes", GA.number_of_nodes())
+            c2.metric("A — Edges", GA.number_of_edges())
+            c3.metric("A — Density", f"{nx.density(GA):.4f}")
+            c4.metric("B — Nodes", GB.number_of_nodes())
+            c5.metric("B — Edges", GB.number_of_edges())
+            c6.metric("B — Density", f"{nx.density(GB):.4f}")
+
+            max_top = min(GA.number_of_nodes(), GB.number_of_nodes())
+            top_n_compare = st.slider(
+                "Top N nodes",
+                min_value=1,
+                max_value=max_top,
+                value=min(10, max_top),
+                step=1,
+            )
+            st.subheader("Top Nodes Comparison")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**{graph_a}** ({'Directed' if GA.is_directed() else 'Undirected'})")
                 scores_a = comp_a.results[valid_a[0]]
                 top_a = sorted(scores_a.items(), key=lambda x: -x[1])[:top_n_compare]
                 rows_a = []
@@ -645,9 +1050,8 @@ with tab2:
                         row[name] = round(comp_a.results[name].get(node, 0.0), 4)
                     rows_a.append(row)
                 st.dataframe(pd.DataFrame(rows_a), use_container_width=True)
-        with col2:
-            st.markdown(f"**{graph_b}** ({'Directed' if GB.is_directed() else 'Undirected'})")
-            if valid_b:
+            with col2:
+                st.markdown(f"**{graph_b}** ({'Directed' if GB.is_directed() else 'Undirected'})")
                 scores_b = comp_b.results[valid_b[0]]
                 top_b = sorted(scores_b.items(), key=lambda x: -x[1])[:top_n_compare]
                 rows_b = []
@@ -658,46 +1062,46 @@ with tab2:
                     rows_b.append(row)
                 st.dataframe(pd.DataFrame(rows_b), use_container_width=True)
 
-        common_valid = [s for s in selected if s in valid_a and s in valid_b]
-        if common_valid:
-            st.subheader("Score Distribution Comparison")
-            dist_index = st.selectbox(
-                "Select index to compare distributions",
-                common_valid,
-                key="dist_index"
-            )
-            vals_a = list(comp_a.results[dist_index].values())
-            vals_b = list(comp_b.results[dist_index].values())
+            common_valid = [s for s in selected if s in valid_a and s in valid_b]
+            if common_valid:
+                st.subheader("Score Distribution Comparison")
+                dist_index = st.selectbox(
+                    "Select index to compare distributions",
+                    common_valid,
+                    key="dist_index"
+                )
+                vals_a = list(comp_a.results[dist_index].values())
+                vals_b = list(comp_b.results[dist_index].values())
 
-            fig_dist = go.Figure()
-            fig_dist.add_trace(go.Histogram(
-                x=vals_a, name=graph_a,
-                opacity=0.7, marker_color='#636EFA',
-                hovertemplate="Score: %{x:.3f}<br>Count: %{y}<extra></extra>"
-            ))
-            fig_dist.add_trace(go.Histogram(
-                x=vals_b, name=graph_b,
-                opacity=0.7, marker_color='#EF553B',
-                hovertemplate="Score: %{x:.3f}<br>Count: %{y}<extra></extra>"
-            ))
-            fig_dist.update_layout(
-                barmode='overlay',
-                title=f"{dist_index} Centrality — Score Distribution",
-                xaxis_title="Score",
-                yaxis_title="Count",
-                height=400,
-                legend_title="Network"
-            )
-            st.plotly_chart(fig_dist, use_container_width=True)
+                fig_dist = go.Figure()
+                fig_dist.add_trace(go.Histogram(
+                    x=vals_a, name=graph_a,
+                    opacity=0.7, marker_color='#636EFA',
+                    hovertemplate="Score: %{x:.3f}<br>Count: %{y}<extra></extra>"
+                ))
+                fig_dist.add_trace(go.Histogram(
+                    x=vals_b, name=graph_b,
+                    opacity=0.7, marker_color='#EF553B',
+                    hovertemplate="Score: %{x:.3f}<br>Count: %{y}<extra></extra>"
+                ))
+                fig_dist.update_layout(
+                    barmode='overlay',
+                    title=f"{dist_index} Centrality — Score Distribution",
+                    xaxis_title="Score",
+                    yaxis_title="Count",
+                    height=400,
+                    legend_title="Network"
+                )
+                st.plotly_chart(fig_dist, use_container_width=True)
+            else:
+                st.info("No common compatible indices are available for both selected networks.")
 
-        st.subheader("Network Graphs")
-        st.markdown(f"**{graph_a}**")
-        if valid_a:
+            st.subheader("Network Graphs")
+            st.markdown(f"**{graph_a}**")
             html_a = build_pyvis(GA, comp_a.results[valid_a[0]], valid_a, comp_a)
             components.html(html_a, height=620, scrolling=False)
 
-        st.markdown(f"**{graph_b}**")
-        if valid_b:
+            st.markdown(f"**{graph_b}**")
             html_b = build_pyvis(GB, comp_b.results[valid_b[0]], valid_b, comp_b)
             components.html(html_b, height=620, scrolling=False)
 
@@ -715,7 +1119,7 @@ with tab3:
     if not selected:
         st.warning("Please select at least one centrality index in the sidebar.")
     else:
-        G_impact = add_weights(load_graph(graph_option))
+        G_impact = G.copy()
 
         warnings_impact = check_compatibility(G_impact, selected)
         for w in warnings_impact:
@@ -725,91 +1129,96 @@ with tab3:
 
         if not valid_impact:
             st.error("No compatible indices for this graph type.")
-            st.stop()
+        else:
+            comp_full = compute_all(G_impact, valid_impact)
+            show_compute_failures(comp_full)
+            valid_impact = available_indices(valid_impact, comp_full)
 
-        comp_full = compute_all(G_impact, valid_impact)
+            if not valid_impact:
+                st.error("No selected indices could be computed for this graph.")
+            else:
 
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            remove_node = st.selectbox(
-                "Select node to remove",
-                options=sorted(G_impact.nodes()),
-                key="remove_node"
-            )
-        with col2:
-            impact_index = st.selectbox(
-                "Index to analyze",
-                valid_impact,
-                key="impact_index"
-            )
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    remove_node = st.selectbox(
+                        "Select node to remove",
+                        options=sorted(G_impact.nodes()),
+                        key="remove_node"
+                    )
+                with col2:
+                    impact_index = st.selectbox(
+                        "Index to analyze",
+                        valid_impact,
+                        key="impact_index"
+                    )
 
-        G_removed = G_impact.copy()
-        G_removed.remove_node(remove_node)
-        comp_removed = compute_all(G_removed, valid_impact)
+                G_removed = G_impact.copy()
+                G_removed.remove_node(remove_node)
+                comp_removed = compute_all(G_removed, valid_impact)
 
-        common_nodes = [n for n in G_impact.nodes() if n != remove_node]
-        changes = []
-        for node in common_nodes:
-            score_before = comp_full.results[impact_index].get(node, 0.0)
-            score_after = comp_removed.results[impact_index].get(node, 0.0)
-            diff = score_after - score_before
-            changes.append({
-                "Node": str(node),
-                "Before": round(score_before, 4),
-                "After": round(score_after, 4),
-                "Change": round(diff, 4),
-            })
+                common_nodes = [n for n in G_impact.nodes() if n != remove_node]
+                changes = []
+                for node in common_nodes:
+                    score_before = comp_full.results[impact_index].get(node, 0.0)
+                    score_after = comp_removed.results[impact_index].get(node, 0.0)
+                    diff = score_after - score_before
+                    changes.append({
+                        "Node": str(node),
+                        "Before": round(score_before, 4),
+                        "After": round(score_after, 4),
+                        "Change": round(diff, 4),
+                    })
 
-        df_changes = pd.DataFrame(changes)
-        df_changes = df_changes.sort_values("Change", ascending=False)
+                df_changes = pd.DataFrame(changes)
+                df_changes = df_changes.sort_values("Change", ascending=False)
 
-        st.subheader("Network Impact Summary")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Nodes before", G_impact.number_of_nodes())
-        c2.metric("Nodes after", G_removed.number_of_nodes())
-        c3.metric("Edges before", G_impact.number_of_edges())
-        c4.metric("Edges after", G_removed.number_of_edges())
+                st.subheader("Network Impact Summary")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Nodes before", G_impact.number_of_nodes())
+                c2.metric("Nodes after", G_removed.number_of_nodes())
+                c3.metric("Edges before", G_impact.number_of_edges())
+                c4.metric("Edges after", G_removed.number_of_edges())
 
-        st.subheader(f"{impact_index} Score Changes After Removing Node {remove_node}")
-        top_changed = df_changes.head(15)
-        colors_bar = ['#00CC96' if x >= 0 else '#EF553B' for x in top_changed['Change']]
+                st.subheader(f"{impact_index} Score Changes After Removing Node {remove_node}")
+                top_changed = df_changes.head(15)
+                colors_bar = ['#00CC96' if x >= 0 else '#EF553B' for x in top_changed['Change']]
 
-        fig_impact = go.Figure()
-        fig_impact.add_trace(go.Bar(
-            x=top_changed['Node'],
-            y=top_changed['Change'],
-            marker_color=colors_bar,
-            hovertemplate="Node: %{x}<br>Change: %{y:+.4f}<extra></extra>"
-        ))
-        fig_impact.update_layout(
-            title=f"Score change after removing node {remove_node} (top 15 most affected)",
-            xaxis_title="Node",
-            yaxis_title="Score Change",
-            height=400,
-        )
-        fig_impact.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
-        st.plotly_chart(fig_impact, use_container_width=True)
+                fig_impact = go.Figure()
+                fig_impact.add_trace(go.Bar(
+                    x=top_changed['Node'],
+                    y=top_changed['Change'],
+                    marker_color=colors_bar,
+                    hovertemplate="Node: %{x}<br>Change: %{y:+.4f}<extra></extra>"
+                ))
+                fig_impact.update_layout(
+                    title=f"Score change after removing node {remove_node} (top 15 most affected)",
+                    xaxis_title="Node",
+                    yaxis_title="Score Change",
+                    height=400,
+                )
+                fig_impact.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
+                st.plotly_chart(fig_impact, use_container_width=True)
 
-        st.subheader("Network Before vs After")
-        st.markdown(f"**Before — Node {remove_node} present**")
-        html_before = build_pyvis(G_impact, comp_full.results[impact_index], valid_impact, comp_full)
-        components.html(html_before, height=620, scrolling=False)
+                st.subheader("Network Before vs After")
+                st.markdown(f"**Before — Node {remove_node} present**")
+                html_before = build_pyvis(G_impact, comp_full.results[impact_index], valid_impact, comp_full)
+                components.html(html_before, height=620, scrolling=False)
 
-        st.markdown(f"**After — Node {remove_node} removed**")
-        html_after = build_pyvis(G_removed, comp_removed.results[impact_index], valid_impact, comp_removed)
-        components.html(html_after, height=620, scrolling=False)
+                st.markdown(f"**After — Node {remove_node} removed**")
+                html_after = build_pyvis(G_removed, comp_removed.results[impact_index], valid_impact, comp_removed)
+                components.html(html_after, height=620, scrolling=False)
 
-        st.subheader("Full Change Table")
-        st.dataframe(
-            df_changes.style.background_gradient(subset=['Change'], cmap='RdYlGn'),
-            use_container_width=True
-        )
+                st.subheader("Full Change Table")
+                st.dataframe(
+                    df_changes.style.background_gradient(subset=['Change'], cmap='RdYlGn'),
+                    use_container_width=True
+                )
 
-        most_affected = df_changes.iloc[0]
-        most_dropped = df_changes.sort_values("Change").iloc[0]
-        col1, col2 = st.columns(2)
-        col1.success(f"Most gained: Node {most_affected['Node']} (+{most_affected['Change']:.4f})")
-        col2.error(f"Most dropped: Node {most_dropped['Node']} ({most_dropped['Change']:.4f})")
+                most_affected = df_changes.iloc[0]
+                most_dropped = df_changes.sort_values("Change").iloc[0]
+                col1, col2 = st.columns(2)
+                col1.success(f"Most gained: Node {most_affected['Node']} (+{most_affected['Change']:.4f})")
+                col2.error(f"Most dropped: Node {most_dropped['Node']} ({most_dropped['Change']:.4f})")
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 4 — ABOUT
@@ -868,6 +1277,12 @@ with tab4:
             "use_case": "Finding critical nodes in weighted infrastructure networks.",
             "type": "Undirected (weighted)"
         },
+        "Weighted Eigenvector Centrality": {
+            "formula": "C(v) = (1/λ) Σ w(u,v)C(u)",
+            "description": "Eigenvector centrality where stronger links contribute more to node importance.",
+            "use_case": "Finding influential nodes in weighted social or transport networks.",
+            "type": "Undirected (weighted)"
+        },
         "In-Degree Centrality": {
             "formula": "C(v) = in_deg(v) / (N - 1)",
             "description": "Normalized number of incoming edges. High in-degree means many nodes point to this node.",
@@ -880,27 +1295,119 @@ with tab4:
             "use_case": "Social networks, finding active broadcasters.",
             "type": "Directed"
         },
+        "Weighted In-Degree Centrality": {
+            "formula": "C(v) = Σ w(u,v) / (N - 1)",
+            "description": "Sums weights of incoming edges to measure weighted authority or inflow.",
+            "use_case": "Citation, trade, traffic, and influence networks with weighted incoming links.",
+            "type": "Directed (weighted)"
+        },
+        "Weighted Out-Degree Centrality": {
+            "formula": "C(v) = Σ w(v,u) / (N - 1)",
+            "description": "Sums weights of outgoing edges to measure weighted activity or outflow.",
+            "use_case": "Networks where outgoing volume or distribution strength matters.",
+            "type": "Directed (weighted)"
+        },
+        "Directed Closeness Centrality": {
+            "formula": "C(v) = (R/(N-1)) · R / Σ d(u,v)",
+            "description": "Measures reachability in directed graphs using incoming paths by default.",
+            "use_case": "Finding nodes that can be reached efficiently by many other nodes.",
+            "type": "Directed"
+        },
+        "Directed Betweenness Centrality": {
+            "formula": "C(v) = Σ σ(s,t|v) / σ(s,t)",
+            "description": "Counts how often a node lies on directed shortest paths.",
+            "use_case": "Finding brokers and bottlenecks in directed communication or dependency networks.",
+            "type": "Directed"
+        },
+        "Directed Eigenvector Centrality": {
+            "formula": "C(v) = (1/λ) Σ C(u), for u → v",
+            "description": "A node is important if important nodes point to it.",
+            "use_case": "Authority-like ranking in directed networks.",
+            "type": "Directed"
+        },
+        "Directed Weighted Closeness Centrality": {
+            "formula": "C(v) = (R/(N-1)) · R / Σ d_w(u,v)",
+            "description": "Directed closeness using weighted shortest paths where stronger links are shorter.",
+            "use_case": "Weighted directed flow, dependency, or transport networks.",
+            "type": "Directed (weighted)"
+        },
+        "Directed Weighted Betweenness Centrality": {
+            "formula": "C(v) = Σ σ_w(s,t|v) / σ_w(s,t)",
+            "description": "Directed betweenness computed on weighted shortest paths.",
+            "use_case": "Finding critical intermediaries in weighted directed infrastructure.",
+            "type": "Directed (weighted)"
+        },
+        "Directed Weighted Eigenvector Centrality": {
+            "formula": "C(v) = (1/λ) Σ w(u,v)C(u), for u → v",
+            "description": "Directed eigenvector centrality that also accounts for edge weights.",
+            "use_case": "Authority-like ranking when incoming links have different strengths.",
+            "type": "Directed (weighted)"
+        },
         "PageRank": {
             "formula": "PR(v) = (1-d)/N + d · Σ PR(u)/out_deg(u)",
             "description": "Models a random walker following edges with damping factor d=0.85. Nodes pointed to by important nodes get higher scores.",
             "use_case": "Web search ranking, finding influential nodes in directed networks.",
             "type": "Directed"
         },
+        "Weighted PageRank": {
+            "formula": "PR(v) = (1-d)/N + d · Σ PR(u)w(u,v)/Σw(u,*)",
+            "description": "PageRank variant where stronger outgoing links pass a larger share of rank.",
+            "use_case": "Ranking in directed networks with weighted links.",
+            "type": "Directed (weighted)"
+        },
     }
 
-    for name, info in indices_info.items():
-        with st.expander(f"{name} — {info['type']}"):
-            st.markdown(f"**Formula:** `{info['formula']}`")
-            st.markdown(f"**Description:** {info['description']}")
-            st.markdown(f"**Use case:** {info['use_case']}")
+    about_groups = {
+        "Classical": [
+            "Degree Centrality", "Closeness Centrality",
+            "Betweenness Centrality", "Eigenvector Centrality"
+        ],
+        "Weighted": [
+            "Weighted Degree Centrality", "Weighted Closeness Centrality",
+            "Weighted Betweenness Centrality", "Weighted Eigenvector Centrality"
+        ],
+        "Directed": [
+            "In-Degree Centrality", "Out-Degree Centrality",
+            "Directed Closeness Centrality", "Directed Betweenness Centrality",
+            "Directed Eigenvector Centrality", "PageRank"
+        ],
+        "Directed Weighted": [
+            "Weighted In-Degree Centrality", "Weighted Out-Degree Centrality",
+            "Directed Weighted Closeness Centrality",
+            "Directed Weighted Betweenness Centrality",
+            "Directed Weighted Eigenvector Centrality",
+            "Weighted PageRank"
+        ],
+    }
+
+    about_tabs = st.tabs(list(about_groups.keys()))
+    for tab, (_, names) in zip(about_tabs, about_groups.items()):
+        with tab:
+            for name in names:
+                info = indices_info[name]
+                with st.expander(f"{name} — {info['type']}"):
+                    st.markdown(f"**Formula:** `{info['formula']}`")
+                    st.markdown(f"**Description:** {info['description']}")
+                    st.markdown(f"**Use case:** {info['use_case']}")
 
     st.subheader("Supported Graph Types")
     st.markdown("""
     | Index | Undirected | Directed |
     |-------|-----------|---------|
     | Degree, Closeness, Betweenness, Eigenvector | ✅ | ❌ |
-    | Weighted Degree, Weighted Closeness, Weighted Betweenness | ✅ | ❌ |
-    | In-Degree, Out-Degree, PageRank | ❌ | ✅ |
+    | Weighted Degree, Weighted Closeness, Weighted Betweenness, Weighted Eigenvector | ✅ | ❌ |
+    | In-Degree, Out-Degree, Directed Closeness, Directed Betweenness, Directed Eigenvector, PageRank | ❌ | ✅ |
+    | Weighted In/Out-Degree, Directed Weighted Closeness, Directed Weighted Betweenness, Directed Weighted Eigenvector, Weighted PageRank | ❌ | ✅ |
+    """)
+
+    st.subheader("Random Graph Models")
+    st.markdown("""
+    | Model | Main parameters | Typical purpose |
+    |-------|-----------------|-----------------|
+    | Erdős–Rényi | number of nodes, edge probability, seed | Baseline random network with independently sampled edges |
+    | Barabási–Albert | number of nodes, edges per new node, seed | Scale-free network with preferential attachment |
+    | Watts–Strogatz | number of nodes, nearest neighbors, rewiring probability, seed | Small-world network with local clustering |
+    | Scale-Free Directed | number of nodes, attachment probabilities, seed | Directed scale-free network for directed centrality indices |
     """)
 
     st.subheader("Tech Stack")

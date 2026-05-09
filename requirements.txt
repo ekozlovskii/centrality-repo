@@ -1,4 +1,9 @@
 networkx
 numpy
+pandas
 matplotlib
+plotly
+pyvis
+streamlit
+pytest
 jupyter

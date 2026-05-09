@@ -1,6 +1,16 @@
 from centrality.base import BaseCentrality
 import networkx as nx
 
+
+def _distance_from_weight(_, __, data):
+    if "weight" in data:
+        weight = data.get("weight", 1.0)
+    else:
+        weights = [edge_data.get("weight", 1.0) for edge_data in data.values()]
+        weight = max(weights) if weights else 1.0
+    return 1.0 / weight if weight > 0 else float("inf")
+
+
 class WeightedBetweennessCentrality(BaseCentrality):
 
 
@@ -8,16 +18,10 @@ class WeightedBetweennessCentrality(BaseCentrality):
         n = self.graph.number_of_nodes()
         self.scores = {node: 0.0 for node in self.graph.nodes()}
 
-        # Копия графа с distance = 1/weight
-        G_dist = self.graph.copy()
-        for u, v, data in G_dist.edges(data=True):
-            w = data.get('weight', 1.0)
-            G_dist[u][v]['distance'] = 1.0 / w if w != 0 else float('inf')
-
         for s in self.graph.nodes():
             # Все кратчайшие взвешенные пути от s
             paths = nx.single_source_dijkstra_path(
-                G_dist, s, weight='distance'
+                self.graph, s, weight=_distance_from_weight
             )
 
             for t in self.graph.nodes():

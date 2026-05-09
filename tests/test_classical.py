@@ -5,6 +5,7 @@ from centrality.classical.degree import DegreeCentrality
 from centrality.classical.closeness import ClosenessCentrality
 from centrality.classical.betweenness import BetweennessCentrality
 from centrality.classical.eigenvector import EigenvectorCentrality
+from centrality.directed.directed_closeness import DirectedClosenessCentrality
 
 
 # ── fixtures ────────────────────────────────────────────────────────────────
@@ -97,6 +98,36 @@ class TestClosenessCentrality:
         cc.compute()
         for score in cc.scores.values():
             assert score >= 0.0
+
+
+# ── Directed Closeness Centrality ────────────────────────────────────────────
+
+class TestDirectedClosenessCentrality:
+
+    def test_matches_networkx_default_inward_closeness(self):
+        graph = nx.DiGraph()
+        graph.add_edges_from([(0, 1), (1, 2), (2, 3), (0, 3)])
+
+        dc = DirectedClosenessCentrality(graph)
+        scores = dc.compute()
+
+        expected = nx.closeness_centrality(graph)
+        assert scores == pytest.approx(expected)
+
+    def test_out_mode_measures_reachability_from_node(self):
+        graph = nx.DiGraph()
+        graph.add_edges_from([(0, 1), (1, 2), (2, 3)])
+
+        dc = DirectedClosenessCentrality(graph, mode="out")
+        scores = dc.compute()
+
+        assert scores[0] > scores[1] > scores[2] > scores[3]
+
+    def test_rejects_undirected_graph(self):
+        graph = nx.path_graph(4)
+
+        with pytest.raises(ValueError, match="Graph must be directed"):
+            DirectedClosenessCentrality(graph).compute()
 
 
 # ── Betweenness Centrality ───────────────────────────────────────────────────

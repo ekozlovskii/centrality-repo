@@ -1,8 +1,8 @@
-from centrality.base import BaseCentrality
 import numpy as np
+from centrality.base import BaseCentrality
 
-class EigenvectorCentrality(BaseCentrality):
 
+class WeightedEigenvectorCentrality(BaseCentrality):
 
     def __init__(self, graph, max_iter=1000, tol=1e-6):
         super().__init__(graph)
@@ -17,28 +17,27 @@ class EigenvectorCentrality(BaseCentrality):
             return self.scores
 
         node_index = {node: i for i, node in enumerate(nodes)}
-
-        # Степенная итерация (power iteration)
         x = np.ones(n) / np.sqrt(n)
+
         for _ in range(self.max_iter):
-            # Начинаем с x, что соответствует сдвигу A + I и помогает
-            # избежать осцилляции на двудольных графах.
             x_new = x.copy()
+
             if self.graph.is_multigraph():
-                for u, v, _ in self.graph.edges(keys=True):
-                    i, j = node_index[u], node_index[v]
-                    x_new[i] += x[j]
-                    x_new[j] += x[i]
+                for u, v, _, data in self.graph.edges(keys=True, data=True):
+                    weight = data.get("weight", 1.0)
+                    x_new[node_index[u]] += weight * x[node_index[v]]
+                    x_new[node_index[v]] += weight * x[node_index[u]]
             else:
-                for u, v in self.graph.edges():
-                    i, j = node_index[u], node_index[v]
-                    x_new[i] += x[j]
-                    x_new[j] += x[i]
+                for u, v, data in self.graph.edges(data=True):
+                    weight = data.get("weight", 1.0)
+                    x_new[node_index[u]] += weight * x[node_index[v]]
+                    x_new[node_index[v]] += weight * x[node_index[u]]
 
             norm = np.linalg.norm(x_new)
             if norm == 0:
                 break
             x_new = x_new / norm
+
             if np.linalg.norm(x_new - x) < self.tol:
                 x = x_new
                 break

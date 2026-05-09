@@ -1,22 +1,29 @@
 from centrality.base import BaseCentrality
 import networkx as nx
 
+
+def _distance_from_weight(_, __, data):
+    if "weight" in data:
+        weight = data.get("weight", 1.0)
+    else:
+        weights = [edge_data.get("weight", 1.0) for edge_data in data.values()]
+        weight = max(weights) if weights else 1.0
+    return 1.0 / weight if weight > 0 else float("inf")
+
+
 class WeightedClosenessCentrality(BaseCentrality):
 
 
     def compute(self) -> dict:
         self.scores = {}
         n = self.graph.number_of_nodes()
-
-        # Создаём копию графа где вес = 1/weight (сильная связь = короткое расстояние)
-        G_dist = self.graph.copy()
-        for u, v, data in G_dist.edges(data=True):
-            w = data.get('weight', 1.0)
-            G_dist[u][v]['distance'] = 1.0 / w if w != 0 else float('inf')
+        if n <= 1:
+            self.scores = {node: 0.0 for node in self.graph.nodes()}
+            return self.scores
 
         for node in self.graph.nodes():
             lengths = nx.single_source_dijkstra_path_length(
-                G_dist, node, weight='distance'
+                self.graph, node, weight=_distance_from_weight
             )
             
             total = sum(lengths.values())

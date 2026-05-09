@@ -1,51 +1,85 @@
 # Repository of Models for Calculating Centrality Indices of Network Structures
 
-A Python library for computing classical and novel centrality indices
-for weighted, directed, and multilayer networks, with an interactive web application.
+This project is a Python library and a Streamlit application for calculating and comparing
+centrality indices in network structures. It was developed as part of my bachelor's thesis in
+Data Science and Business Analytics.
 
-## Description
+The main idea is simple: the centrality measures are implemented as separate classes with a
+common interface, and the web application uses these classes to make the calculations easier to
+explore visually.
 
-This repository provides a unified, extensible toolkit for analyzing network structures
-using centrality measures. The library is built around an abstract base class architecture,
-ensuring a consistent interface across all implementations and making it straightforward
-to add new indices.
+## What is implemented
 
-## Implemented Indices
+### Classical indices
+- Degree Centrality
+- Closeness Centrality
+- Betweenness Centrality
+- Eigenvector Centrality
 
-### Classical
-- **Degree Centrality** — normalized number of direct connections
-- **Closeness Centrality** — centrality based on average shortest path length
-- **Betweenness Centrality** — centrality based on shortest path traversal
-- **Eigenvector Centrality** — importance based on neighbor importance (power iteration)
+### Weighted indices
+- Weighted Degree Centrality
+- Weighted Closeness Centrality
+- Weighted Betweenness Centrality
+- Weighted Eigenvector Centrality
 
-### Weighted
-- **Weighted Degree Centrality** — sum of edge weights (strength centrality)
-- **Weighted Closeness Centrality** — closeness via Dijkstra with 1/weight distances
-- **Weighted Betweenness Centrality** — betweenness on weighted shortest paths
+### Directed indices
+- In-Degree Centrality
+- Out-Degree Centrality
+- Directed Closeness Centrality
+- Directed Betweenness Centrality
+- Directed Eigenvector Centrality
+- PageRank
 
-### Directed
-- **In-Degree Centrality** — normalized number of incoming edges
-- **Out-Degree Centrality** — normalized number of outgoing edges
-- **PageRank** — Google's random walk algorithm with damping factor 0.85
+### Directed weighted indices
+- Weighted In-Degree Centrality
+- Weighted Out-Degree Centrality
+- Directed Weighted Closeness Centrality
+- Directed Weighted Betweenness Centrality
+- Directed Weighted Eigenvector Centrality
+- Weighted PageRank
 
-### In Development
-- Novel indices accounting for node attributes and group interactions
-- Multilayer network centrality
+## Web application
 
-## Web Application
+The Streamlit app allows the user to:
 
-An interactive web application is available via Streamlit with the following features:
+- choose one of several built-in network datasets;
+- upload an edge list from CSV;
+- generate random graphs with parameters;
+- select centrality indices by groups;
+- compare centrality values in tables and bar charts;
+- visualize the graph with node size and color based on centrality;
+- inspect one node in detail;
+- compare two networks side by side;
+- remove a node and see how centrality scores change;
+- export calculated results as CSV.
 
-- 6 built-in network datasets (Karate Club, Les Misérables, Florentine Families, and more)
-- CSV upload with automatic edge weight detection
-- Interactive network graph (Pyvis) with node size/color reflecting centrality
-- Node filter slider and node highlight search
-- Interactive bar chart comparing multiple indices (Plotly)
-- Pearson correlation heatmap
-- Node Inspector with radar chart and percentile statistics
-- Compare two networks side by side
-- Node Impact Analysis — remove a node and see how scores change
-- Export results as CSV
+For larger graphs the app includes a simple display mode with smaller nodes, more transparent
+edges, optional labels, and automatic physics stabilization. This does not solve every readability
+problem for dense networks, but it makes graphs with 100-200 nodes more usable than the default
+visualization.
+
+## Random graph models
+
+The app currently supports four random graph models:
+
+| Model | Main parameters | Notes |
+|---|---|---|
+| Erdős-Rényi | number of nodes, edge probability, seed | Basic random graph model |
+| Barabási-Albert | number of nodes, edges per new node, seed | Preferential attachment / scale-free structure |
+| Watts-Strogatz | number of nodes, nearest neighbors, rewiring probability, seed | Small-world network model |
+| Scale-Free Directed | number of nodes, attachment probabilities, seed | Directed scale-free graph |
+
+## Supported graph types
+
+| Index group | Undirected | Weighted | Directed | Directed weighted |
+|---|---:|---:|---:|---:|
+| Classical | yes | partly | no | no |
+| Weighted | yes | yes | partly | partly |
+| Directed | no | no | yes | partly |
+| Directed weighted | no | no | yes | yes |
+
+Some weighted indices can technically be computed on directed graphs, but for interpretation it is
+usually better to use the explicit directed weighted versions when the network has direction.
 
 ## Installation
 
@@ -55,45 +89,49 @@ cd centrality-repo
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## Run the app
+
+```bash
+streamlit run app.py
+```
+
+## Library usage example
 
 ```python
 import networkx as nx
+
 from centrality.classical.degree import DegreeCentrality
 from centrality.classical.betweenness import BetweennessCentrality
 from utils.comparator import CentralityComparator
 
 G = nx.karate_club_graph()
 
+degree = DegreeCentrality(G)
+degree.compute()
+
+betweenness = BetweennessCentrality(G)
+betweenness.compute()
+
 comp = CentralityComparator()
-comp.add("Degree", DegreeCentrality(G))
-comp.add("Betweenness", BetweennessCentrality(G))
+comp.add("Degree", degree)
+comp.add("Betweenness", betweenness)
 
-comp.top_nodes(5)
-comp.correlation_matrix()
+print(comp.top_nodes(5))
+print(comp.correlation_matrix())
 ```
 
-## Run Web Application
+## Project structure
 
-```bash
-streamlit run app.py
-```
-
-## Project Structure
-
-```
+```text
 centrality_repo/
+├── app.py
 ├── centrality/
-│   ├── base.py              # Abstract base class
-│   ├── classical/           # Degree, Closeness, Betweenness, Eigenvector
-│   ├── weighted/            # Weighted Closeness, Weighted Betweenness
-│   ├── directed/            # In-Degree, Out-Degree, PageRank
-│   └── multilayer/          # Planned: multilayer indices
-├── utils/
-│   └── comparator.py        # Multi-index comparison and correlation
+│   ├── base.py
+│   ├── classical/
+│   ├── weighted/
+│   └── directed/
 ├── tests/
-│   └── test_classical.py    # 16 automated pytest tests
-├── app.py                   # Streamlit web application
+├── utils/
 └── requirements.txt
 ```
 
@@ -103,20 +141,17 @@ centrality_repo/
 python3 -m pytest tests/ -v
 ```
 
-All 16 tests pass.
+At the moment the test suite checks the main classical, weighted, directed, and directed weighted
+implementations on small graphs with known behavior or against NetworkX reference functions.
 
-## Tech Stack
+## Current limitations and next steps
 
-- **Python 3.9+**
-- **NetworkX** — graph data structures
-- **NumPy** — matrix operations
-- **Streamlit** — web interface
-- **Plotly** — interactive charts
-- **Pyvis** — interactive network visualization
-- **pytest** — automated testing
+- Multilayer centrality is planned but not implemented yet.
+- Very dense graphs can still be hard to read visually, even with large graph mode.
+- New centrality measures with node attributes or quotas are planned for the next stage of the thesis.
 
 ## Author
 
-Evgeniy Kozlovskii — Data Science and Business Analytics, Bachelor's Thesis 2025–2026
+Evgeniy Kozlovskii  
+Bachelor's Programme Data Science and Business Analytics  
 HSE University, Faculty of Computer Science
-Repository: [github.com/ekozlovskii/centrality-repo](https://github.com/ekozlovskii/centrality-repo)
