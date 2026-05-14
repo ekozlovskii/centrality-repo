@@ -18,7 +18,6 @@ class PageRankCentrality(BaseCentrality):
         n = len(nodes)
         node_index = {node: i for i, node in enumerate(nodes)}
 
-        # Начальный PageRank — равномерно
         pr = np.ones(n) / n
 
         for _ in range(self.max_iter):
@@ -26,7 +25,6 @@ class PageRankCentrality(BaseCentrality):
 
             for node in nodes:
                 i = node_index[node]
-                # Все входящие рёбра
                 for predecessor in self.graph.predecessors(node):
                     j = node_index[predecessor]
                     out_deg = self.graph.out_degree(predecessor)

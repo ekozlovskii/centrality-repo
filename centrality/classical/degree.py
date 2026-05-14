@@ -25,7 +25,6 @@ class WeightedDegreeCentrality(BaseCentrality):
         
         self.scores = {}
         for node in self.graph.nodes():
-            # Сумма весов всех рёбер вершины
             strength = sum(
                 data.get('weight', 1.0) 
                 for _, _, data in self.graph.edges(node, data=True)

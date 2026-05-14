@@ -18,11 +18,9 @@ class EigenvectorCentrality(BaseCentrality):
 
         node_index = {node: i for i, node in enumerate(nodes)}
 
-        # Степенная итерация (power iteration)
         x = np.ones(n) / np.sqrt(n)
         for _ in range(self.max_iter):
-            # Начинаем с x, что соответствует сдвигу A + I и помогает
-            # избежать осцилляции на двудольных графах.
+            # A + I shift helps avoid oscillation on bipartite graphs.
             x_new = x.copy()
             if self.graph.is_multigraph():
                 for u, v, _ in self.graph.edges(keys=True):

@@ -33,9 +33,10 @@ from centrality.directed.directed_eigenvector import (
     DirectedWeightedEigenvectorCentrality,
 )
 from centrality.directed.weighted_pagerank import WeightedPageRankCentrality
+from centrality.quota_based import BundleIndexCentrality, PivotalIndexCentrality
 from utils.comparator import CentralityComparator
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# Page config
 
 st.set_page_config(
     page_title="Network Centrality Analyzer",
@@ -46,11 +47,11 @@ st.set_page_config(
 st.title("Network Centrality Analyzer")
 st.markdown("Compute and compare centrality indices for network structures.")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Analysis", "Compare Networks", "Node Impact", "About"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Analysis", "Compare Networks", "Node Impact", "Data Laboratory", "About"
+])
 
-# ════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
-# ════════════════════════════════════════════════════════════════════════════
+# Sidebar
 
 st.sidebar.header("Settings")
 
@@ -65,9 +66,9 @@ GRAPH_OPTIONS = [
 ]
 
 RANDOM_GRAPH_MODELS = [
-    "Erdős–Rényi",
-    "Barabási–Albert",
-    "Watts–Strogatz",
+    "Erdős-Rényi",
+    "Barabási-Albert",
+    "Watts-Strogatz",
     "Scale-Free Directed",
 ]
 
@@ -102,7 +103,7 @@ def random_graph_controls(container, key_prefix):
             key=f"{key_prefix}_random_seed",
         )
 
-        if params["model"] == "Erdős–Rényi":
+        if params["model"] == "Erdős-Rényi":
             params["p"] = st.slider(
                 "Edge probability",
                 min_value=0.01,
@@ -111,7 +112,7 @@ def random_graph_controls(container, key_prefix):
                 step=0.01,
                 key=f"{key_prefix}_er_p",
             )
-        elif params["model"] == "Barabási–Albert":
+        elif params["model"] == "Barabási-Albert":
             max_m = max(1, min(20, params["n"] - 1))
             params["m"] = st.slider(
                 "Edges per new node",
@@ -121,7 +122,7 @@ def random_graph_controls(container, key_prefix):
                 step=1,
                 key=f"{key_prefix}_ba_m",
             )
-        elif params["model"] == "Watts–Strogatz":
+        elif params["model"] == "Watts-Strogatz":
             max_k = max(2, min(30, params["n"] - 1))
             if max_k % 2 == 1:
                 max_k -= 1
@@ -185,10 +186,12 @@ INDEX_GROUPS = {
         "Directed Weighted Closeness", "Directed Weighted Betweenness",
         "Directed Weighted Eigenvector", "Weighted PageRank"
     ],
+    "Quota-based": ["Bundle Index", "Pivotal Index"],
 }
 
 DIRECTED_INDICES = set(INDEX_GROUPS["Directed"] + INDEX_GROUPS["Directed Weighted"])
 UNDIRECTED_INDICES = set(INDEX_GROUPS["Classical"] + INDEX_GROUPS["Weighted"])
+QUOTA_BASED_INDICES = set(INDEX_GROUPS["Quota-based"])
 
 selected = []
 for group_name, group_indices in INDEX_GROUPS.items():
@@ -204,9 +207,67 @@ for group_name, group_indices in INDEX_GROUPS.items():
             )
         )
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+node_attributes_df = None
+node_id_column = None
+quota_column = None
+quota_indices_selected = any(name in QUOTA_BASED_INDICES for name in selected)
+quota_max_group_size = 3
+node_attributes_file = None
 
-DIRECTED_DATASETS = {"Scale-Free Directed (Barabási–Albert)"}
+if quota_indices_selected:
+    st.sidebar.header("Node Attributes")
+    node_attributes_file = st.sidebar.file_uploader(
+        "Upload node attributes CSV",
+        type=["csv"],
+        help="Required for Bundle Index and Pivotal Index. Include one node id column and one numeric quota column.",
+    )
+    quota_max_group_size = st.sidebar.slider(
+        "Max group size for quota indices",
+        min_value=1,
+        max_value=6,
+        value=3,
+        step=1,
+        help="Limits the number of incoming neighbors considered together. Larger values can become slow.",
+    )
+    with st.sidebar.expander("Node attributes CSV example"):
+        st.code(
+            "node,quota,gdp,population\n"
+            "v1,1,100,20\n"
+            "v2,1,250,35\n"
+            "v3,1,180,28",
+            language="text",
+        )
+
+    if node_attributes_file is not None:
+        node_attributes_file.seek(0)
+        try:
+            node_attributes_df = pd.read_csv(node_attributes_file)
+            if not node_attributes_df.empty:
+                columns = list(node_attributes_df.columns)
+                node_id_column = st.sidebar.selectbox(
+                    "Node id column",
+                    columns,
+                    key="node_id_column",
+                )
+                numeric_columns = [
+                    col for col in columns
+                    if col != node_id_column and pd.api.types.is_numeric_dtype(node_attributes_df[col])
+                ]
+                quota_options = numeric_columns or [col for col in columns if col != node_id_column]
+                if quota_options:
+                    quota_column = st.sidebar.selectbox(
+                        "Quota column",
+                        quota_options,
+                        key="quota_column",
+                    )
+                else:
+                    st.sidebar.warning("Attributes CSV needs at least one quota column.")
+        except Exception as exc:
+            st.sidebar.warning(f"Could not read node attributes CSV: {exc}")
+
+# Helpers
+
+DIRECTED_DATASETS = {"Scale-Free Directed (Barabási-Albert)"}
 
 INDEX_MAP = {
     "Degree": DegreeCentrality,
@@ -229,19 +290,61 @@ INDEX_MAP = {
     "Directed Weighted Eigenvector": DirectedWeightedEigenvectorCentrality,
     "PageRank": PageRankCentrality,
     "Weighted PageRank": WeightedPageRankCentrality,
+    "Bundle Index": BundleIndexCentrality,
+    "Pivotal Index": PivotalIndexCentrality,
 }
 
+
+def _coerce_like_node(value, node):
+    try:
+        return type(node)(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def build_quota_map(graph, attributes_df, node_col, quota_col):
+    if attributes_df is None or node_col is None or quota_col is None:
+        return {}
+
+    raw = {}
+    raw_by_text = {}
+    for _, row in attributes_df.iterrows():
+        try:
+            node_id = row[node_col]
+            quota = float(row[quota_col])
+            raw[node_id] = quota
+            raw_by_text[str(node_id)] = quota
+        except (TypeError, ValueError):
+            continue
+
+    quotas = {}
+    for node in graph.nodes():
+        candidates = [
+            node,
+            str(node),
+            _coerce_like_node(node, next(iter(raw), node)),
+        ]
+        for candidate in candidates:
+            if candidate in raw:
+                quotas[node] = raw[candidate]
+                break
+            if str(candidate) in raw_by_text:
+                quotas[node] = raw_by_text[str(candidate)]
+                break
+
+    return quotas
+
 def create_random_graph(params):
-    model = params.get("model", "Barabási–Albert")
+    model = params.get("model", "Barabási-Albert")
     n = int(params.get("n", 50))
     seed = int(params.get("seed", 42))
 
-    if model == "Erdős–Rényi":
+    if model == "Erdős-Rényi":
         return nx.erdos_renyi_graph(n, params.get("p", 0.08), seed=seed)
-    if model == "Barabási–Albert":
+    if model == "Barabási-Albert":
         m = min(int(params.get("m", 2)), n - 1)
         return nx.barabasi_albert_graph(n, m, seed=seed)
-    if model == "Watts–Strogatz":
+    if model == "Watts-Strogatz":
         k = min(int(params.get("k", 4)), n - 1)
         if k % 2 == 1:
             k -= 1
@@ -319,12 +422,19 @@ def check_compatibility(G, selected):
         )
     return warnings
 
-def compute_all(G, selected):
+def compute_all(G, selected, quotas=None, max_group_size=3):
     comp = CentralityComparator()
     comp.failures = {}
     for name in selected:
         try:
-            instance = INDEX_MAP[name](G)
+            if name in QUOTA_BASED_INDICES:
+                instance = INDEX_MAP[name](
+                    G,
+                    quotas=quotas or {},
+                    max_group_size=max_group_size,
+                )
+            else:
+                instance = INDEX_MAP[name](G)
             instance.compute()
             comp.add(name, instance)
         except Exception as exc:
@@ -348,6 +458,29 @@ def score_to_color(score, max_s):
     b = int(200 * (1 - ratio))
     return f"#{r:02x}{g:02x}{b:02x}"
 
+
+def layout_positions(G, layout_name):
+    if layout_name == "Physics simulation":
+        return None
+
+    simple_graph = nx.Graph(G)
+    try:
+        if layout_name == "Spring layout":
+            return nx.spring_layout(simple_graph, seed=42, weight="weight")
+        if layout_name == "Kamada-Kawai layout":
+            return nx.kamada_kawai_layout(simple_graph, weight="weight")
+        if layout_name == "Circular layout":
+            return nx.circular_layout(simple_graph)
+        if layout_name == "Shell layout":
+            return nx.shell_layout(simple_graph)
+        if layout_name == "Spectral layout":
+            return nx.spectral_layout(simple_graph, weight="weight")
+    except Exception:
+        return nx.spring_layout(simple_graph, seed=42, weight="weight")
+
+    return None
+
+
 def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     visual_options = visual_options or {}
     node_count = G.number_of_nodes()
@@ -358,6 +491,9 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     node_scale = visual_options.get("node_scale", 0.65 if large_mode else 1.0)
     edge_opacity = visual_options.get("edge_opacity", 0.08 if large_mode else 0.22)
     edge_width = visual_options.get("edge_width", 0.5 if large_mode else 1.0)
+    layout_name = visual_options.get("layout", "Physics simulation")
+    positions = layout_positions(G, layout_name)
+    physics_enabled = positions is None
     stabilization_iterations = 400 if large_mode else 180
     gravitational_constant = -9000 if large_mode else -3500
     spring_length = 220 if large_mode else 150
@@ -371,6 +507,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     net.set_options(f"""
     {{
       "physics": {{
+        "enabled": {str(physics_enabled).lower()},
         "barnesHut": {{
           "gravitationalConstant": {gravitational_constant},
           "centralGravity": 0.12,
@@ -388,7 +525,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
         }}
       }},
       "interaction": {{
-        "zoomView": false,
+        "zoomView": true,
         "dragView": true,
         "hover": true,
         "tooltipDelay": 100,
@@ -420,9 +557,24 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
             if name in comp.results:
                 tooltip_lines.append(f"{name}: {comp.results[name].get(node, 0.0):.4f}")
         tooltip = "\n".join(tooltip_lines)
+        node_kwargs = {}
+        label_text = str(node) if show_labels or is_highlighted else " "
+        font_options = (
+            {"size": 14 if is_highlighted else 10, "color": "white"}
+            if show_labels or is_highlighted
+            else {"size": 0, "color": "rgba(255,255,255,0)"}
+        )
+        if positions is not None and node in positions:
+            x, y = positions[node]
+            node_kwargs.update({
+                "x": float(x) * 650,
+                "y": float(y) * 650,
+                "fixed": {"x": True, "y": True},
+            })
+
         net.add_node(
             str(node),
-            label=str(node) if show_labels or is_highlighted else "",
+            label=label_text,
             size=size * 1.8 if is_highlighted else size,
             color={
                 "background": "#ffdd00" if is_highlighted else color,
@@ -430,7 +582,8 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
                 "highlight": {"background": "#ffdd00", "border": "#ff8800"}
             },
             title=tooltip,
-            font={"size": 14 if is_highlighted else 10, "color": "white"}
+            font=font_options,
+            **node_kwargs,
         )
     if show_edges:
         for u, v, data in G.edges(data=True):
@@ -482,6 +635,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
 
         function fitNetwork(force) {
           if (userInteracted && !force) return;
+          if (initialFitFinished && !force) return;
           if (typeof network === "undefined") return;
           var container = document.getElementById("mynetwork");
           if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return;
@@ -504,8 +658,6 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
 
           network.once("stabilizationIterationsDone", function () {
             fitNetwork(true);
-            setTimeout(function () { fitNetwork(false); }, 250);
-            setTimeout(function () { fitNetwork(false); }, 750);
             setTimeout(function () {
               network.setOptions({ physics: false });
               initialFitFinished = true;
@@ -520,8 +672,6 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
         }
 
         window.addEventListener("load", function () {
-          setTimeout(function () { fitNetwork(false); }, 150);
-          setTimeout(function () { fitNetwork(false); }, 600);
           setTimeout(function () {
             fitNetwork(false);
             initialFitFinished = true;
@@ -532,26 +682,11 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
             setTimeout(function () { fitNetwork(false); }, 150);
           }
         });
-        document.addEventListener("visibilitychange", function () {
-          if (!userInteracted) {
-            setTimeout(function () { fitNetwork(false); }, 150);
-          }
-        });
         document.addEventListener("mouseenter", function () {
           if (!initialFitFinished && !userInteracted) {
             setTimeout(function () { fitNetwork(false); }, 100);
           }
         });
-
-        var attempts = 0;
-        var interval = setInterval(function () {
-          fitNetwork(false);
-          attempts += 1;
-          if (attempts > 8 || userInteracted) {
-            initialFitFinished = true;
-            clearInterval(interval);
-          }
-        }, 500);
       })();
     </script>
     """
@@ -559,9 +694,7 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     html_content = html_content.replace("</body>", fit_script + "\n</body>")
     return html_content
 
-# ════════════════════════════════════════════════════════════════════════════
-# TAB 1 — ANALYSIS
-# ════════════════════════════════════════════════════════════════════════════
+# TAB 1 - ANALYSIS
 
 with tab1:
     uploaded_file = None
@@ -583,7 +716,7 @@ with tab1:
             st.code("source,target\n0,1\n1,2\n2,0", language="text")
             st.markdown("**Directed with weights:**")
             st.code("source,target,weight\n0,1,3.0\n1,2,1.5\n2,0,2.0", language="text")
-            st.markdown("*Column names can be anything — order matters.*")
+            st.markdown("*Column names can be anything - order matters.*")
 
     if graph_option == "Upload CSV" and uploaded_file is not None:
         df_upload = pd.read_csv(uploaded_file)
@@ -595,19 +728,32 @@ with tab1:
     else:
         G = add_weights(load_graph(graph_option, random_params=analysis_random_params))
 
-    # Показываем тип графа
+    quota_values = build_quota_map(G, node_attributes_df, node_id_column, quota_column)
+    if selected and any(name in QUOTA_BASED_INDICES for name in selected):
+        missing_quota_count = G.number_of_nodes() - len(quota_values)
+        if missing_quota_count:
+            if node_attributes_df is not None and node_id_column is not None:
+                st.warning(
+                    "Bundle Index and Pivotal Index require node quotas. "
+                    f"Matched {len(quota_values)} of {G.number_of_nodes()} graph nodes. "
+                    f"Check that values in `{node_id_column}` match graph node ids."
+                )
+            else:
+                st.warning(
+                    "Bundle Index and Pivotal Index require node quotas. "
+                    "Upload a node attributes CSV and select a quota column in the sidebar."
+                )
+
     graph_type = "Directed" if G.is_directed() else "Undirected"
     st.sidebar.markdown(f"**Graph type:** {graph_type}")
 
     if not selected:
         st.warning("Please select at least one centrality index.")
     else:
-        # Проверка совместимости
         warnings = check_compatibility(G, selected)
         for w in warnings:
             st.warning(w)
 
-        # Фильтруем только совместимые индексы
         valid_selected = []
         for s in selected:
             if s in DIRECTED_INDICES and not G.is_directed():
@@ -617,7 +763,12 @@ with tab1:
         if not valid_selected:
             st.error("No compatible indices selected for this graph type. Please adjust your selection.")
         else:
-            comp = compute_all(G, valid_selected)
+            comp = compute_all(
+                G,
+                valid_selected,
+                quotas=quota_values,
+                max_group_size=quota_max_group_size,
+            )
             show_compute_failures(comp)
             valid_selected = available_indices(valid_selected, comp)
 
@@ -625,7 +776,6 @@ with tab1:
                 st.error("No selected indices could be computed for this graph.")
             else:
 
-                # Network overview
                 st.subheader("Network Overview")
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Nodes", G.number_of_nodes())
@@ -633,7 +783,6 @@ with tab1:
                 col3.metric("Density", f"{nx.density(G):.4f}")
                 col4.metric("Type", graph_type)
 
-                # Top nodes table
                 st.subheader("Top Nodes")
                 total_nodes = G.number_of_nodes()
 
@@ -679,31 +828,48 @@ with tab1:
                     mime="text/csv"
                 )
 
-                # Bar chart
-                st.subheader("Centrality Comparison Chart")
-                fig_bar = go.Figure()
-                colors = px.colors.qualitative.Plotly
-                for i, name in enumerate(valid_selected):
-                    values = [comp.results[name].get(node, 0.0) for node in top_node_ids]
-                    fig_bar.add_trace(go.Bar(
-                        name=name,
-                        x=[str(n) for n in top_node_ids],
-                        y=values,
-                        marker_color=colors[i % len(colors)],
-                        hovertemplate=f"<b>{name}</b><br>Node: %{{x}}<br>Score: %{{y:.4f}}<extra></extra>"
-                    ))
-                fig_bar.update_layout(
-                    barmode='group',
-                    xaxis_title="Node",
-                    yaxis_title="Centrality Score",
-                    title="Centrality Indices Comparison",
-                    legend_title="Index",
-                    hovermode="x unified",
-                    height=450,
+                st.subheader("Distribution Chart")
+                distribution_options = ["Degree"]
+                if G.is_directed():
+                    distribution_options.extend(["In-degree", "Out-degree"])
+                distribution_options.extend(valid_selected)
+                distribution_options = list(dict.fromkeys(distribution_options))
+                distribution_choice = st.selectbox(
+                    "Select distribution to display",
+                    distribution_options,
+                    key="analysis_distribution_choice",
                 )
-                st.plotly_chart(fig_bar, use_container_width=True)
 
-                # Network graph
+                if distribution_choice == "Degree":
+                    distribution_values = [degree for _, degree in G.degree()]
+                    x_title = "Degree"
+                elif distribution_choice == "In-degree":
+                    distribution_values = [degree for _, degree in G.in_degree()]
+                    x_title = "In-degree"
+                elif distribution_choice == "Out-degree":
+                    distribution_values = [degree for _, degree in G.out_degree()]
+                    x_title = "Out-degree"
+                else:
+                    distribution_values = list(comp.results[distribution_choice].values())
+                    x_title = "Centrality score"
+
+                fig_dist = go.Figure(data=[
+                    go.Histogram(
+                        x=distribution_values,
+                        marker_color="#636EFA",
+                        opacity=0.85,
+                        hovertemplate=f"{x_title}: %{{x}}<br>Count: %{{y}}<extra></extra>",
+                    )
+                ])
+                fig_dist.update_layout(
+                    title=f"{distribution_choice} Distribution",
+                    xaxis_title=x_title,
+                    yaxis_title="Number of nodes",
+                    height=420,
+                    bargap=0.05,
+                )
+                st.plotly_chart(fig_dist, use_container_width=True)
+
                 st.subheader("Interactive Network Graph")
                 large_graph_default = G.number_of_nodes() > 100 or G.number_of_edges() > 300
                 col_graph1, col_graph2, col_graph3 = st.columns([3, 2, 2])
@@ -725,7 +891,20 @@ with tab1:
                     )
 
                 with st.expander("Graph display settings", expanded=large_graph_default):
-                    col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+                    col_layout, col_v1, col_v2 = st.columns([2, 1, 1])
+                    with col_layout:
+                        graph_layout = st.selectbox(
+                            "Layout",
+                            [
+                                "Physics simulation",
+                                "Spring layout",
+                                "Kamada-Kawai layout",
+                                "Circular layout",
+                                "Shell layout",
+                                "Spectral layout",
+                            ],
+                            index=0,
+                        )
                     with col_v1:
                         large_mode = st.checkbox(
                             "Large graph mode",
@@ -737,6 +916,7 @@ with tab1:
                             "Show node labels",
                             value=not large_graph_default,
                         )
+                    col_v3, col_v4 = st.columns(2)
                     with col_v3:
                         show_edges = st.checkbox(
                             "Show edges",
@@ -766,6 +946,7 @@ with tab1:
                     "show_edges": show_edges,
                     "node_scale": node_scale,
                     "edge_opacity": edge_opacity,
+                    "layout": graph_layout,
                 }
 
                 scores = comp.results[valid_selected[0]]
@@ -778,7 +959,19 @@ with tab1:
                 comp_filtered = CentralityComparator()
                 for name in valid_selected:
                     try:
-                        instance = INDEX_MAP[name](G_filtered)
+                        filtered_quotas = {
+                            node: quota_values[node]
+                            for node in G_filtered.nodes()
+                            if node in quota_values
+                        }
+                        if name in QUOTA_BASED_INDICES:
+                            instance = INDEX_MAP[name](
+                                G_filtered,
+                                quotas=filtered_quotas,
+                                max_group_size=quota_max_group_size,
+                            )
+                        else:
+                            instance = INDEX_MAP[name](G_filtered)
                         instance.compute()
                         comp_filtered.add(name, instance)
                     except Exception:
@@ -801,7 +994,6 @@ with tab1:
                 )
                 components.html(html_content, height=640, scrolling=False)
 
-                # Correlation matrix
                 if len(valid_selected) > 1:
                     st.subheader("Correlation Matrix")
                     nodes_list = list(G.nodes())
@@ -828,7 +1020,6 @@ with tab1:
                     )
                     st.plotly_chart(fig_corr, use_container_width=True)
 
-                # Node inspector
                 st.subheader("Node Inspector")
                 selected_node = st.selectbox(
                     "Select a node to inspect",
@@ -838,7 +1029,7 @@ with tab1:
                 if selected_node is not None:
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.markdown(f"**Node {selected_node} — Centrality Scores**")
+                        st.markdown(f"**Node {selected_node} - Centrality Scores**")
                         rows_inspector = []
                         for name in valid_selected:
                             score = comp.results[name].get(selected_node, 0.0)
@@ -911,11 +1102,9 @@ with tab1:
                             st.info("Select 3 or more indices to see the radar chart.")
 
                 st.markdown("---")
-                st.markdown("*Network Centrality Analyzer — Bachelor's Thesis Project*")
+                st.markdown("*Network Centrality Analyzer - Bachelor's Thesis Project*")
 
-# ════════════════════════════════════════════════════════════════════════════
-# TAB 2 — COMPARE NETWORKS
-# ════════════════════════════════════════════════════════════════════════════
+# TAB 2 - COMPARE NETWORKS
 
 with tab2:
     st.subheader("Compare Two Networks")
@@ -1005,8 +1194,20 @@ with tab2:
                 compare_ready = False
 
         if compare_ready:
-            comp_a = compute_all(GA, valid_a)
-            comp_b = compute_all(GB, valid_b)
+            quotas_a = build_quota_map(GA, node_attributes_df, node_id_column, quota_column)
+            quotas_b = build_quota_map(GB, node_attributes_df, node_id_column, quota_column)
+            comp_a = compute_all(
+                GA,
+                valid_a,
+                quotas=quotas_a,
+                max_group_size=quota_max_group_size,
+            )
+            comp_b = compute_all(
+                GB,
+                valid_b,
+                quotas=quotas_b,
+                max_group_size=quota_max_group_size,
+            )
             show_compute_failures(comp_a)
             show_compute_failures(comp_b)
             valid_a = available_indices(valid_a, comp_a)
@@ -1022,12 +1223,12 @@ with tab2:
         if compare_ready:
             st.subheader("Network Overview")
             c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric("A — Nodes", GA.number_of_nodes())
-            c2.metric("A — Edges", GA.number_of_edges())
-            c3.metric("A — Density", f"{nx.density(GA):.4f}")
-            c4.metric("B — Nodes", GB.number_of_nodes())
-            c5.metric("B — Edges", GB.number_of_edges())
-            c6.metric("B — Density", f"{nx.density(GB):.4f}")
+            c1.metric("A - Nodes", GA.number_of_nodes())
+            c2.metric("A - Edges", GA.number_of_edges())
+            c3.metric("A - Density", f"{nx.density(GA):.4f}")
+            c4.metric("B - Nodes", GB.number_of_nodes())
+            c5.metric("B - Edges", GB.number_of_edges())
+            c6.metric("B - Density", f"{nx.density(GB):.4f}")
 
             max_top = min(GA.number_of_nodes(), GB.number_of_nodes())
             top_n_compare = st.slider(
@@ -1086,7 +1287,7 @@ with tab2:
                 ))
                 fig_dist.update_layout(
                     barmode='overlay',
-                    title=f"{dist_index} Centrality — Score Distribution",
+                    title=f"{dist_index} Centrality - Score Distribution",
                     xaxis_title="Score",
                     yaxis_title="Count",
                     height=400,
@@ -1105,9 +1306,7 @@ with tab2:
             html_b = build_pyvis(GB, comp_b.results[valid_b[0]], valid_b, comp_b)
             components.html(html_b, height=620, scrolling=False)
 
-# ════════════════════════════════════════════════════════════════════════════
-# TAB 3 — NODE IMPACT
-# ════════════════════════════════════════════════════════════════════════════
+# TAB 3 - NODE IMPACT
 
 with tab3:
     st.subheader("Node Impact Analysis")
@@ -1130,7 +1329,17 @@ with tab3:
         if not valid_impact:
             st.error("No compatible indices for this graph type.")
         else:
-            comp_full = compute_all(G_impact, valid_impact)
+            impact_quotas = {
+                node: quota_values[node]
+                for node in G_impact.nodes()
+                if node in quota_values
+            }
+            comp_full = compute_all(
+                G_impact,
+                valid_impact,
+                quotas=impact_quotas,
+                max_group_size=quota_max_group_size,
+            )
             show_compute_failures(comp_full)
             valid_impact = available_indices(valid_impact, comp_full)
 
@@ -1154,7 +1363,17 @@ with tab3:
 
                 G_removed = G_impact.copy()
                 G_removed.remove_node(remove_node)
-                comp_removed = compute_all(G_removed, valid_impact)
+                removed_quotas = {
+                    node: impact_quotas[node]
+                    for node in G_removed.nodes()
+                    if node in impact_quotas
+                }
+                comp_removed = compute_all(
+                    G_removed,
+                    valid_impact,
+                    quotas=removed_quotas,
+                    max_group_size=quota_max_group_size,
+                )
 
                 common_nodes = [n for n in G_impact.nodes() if n != remove_node]
                 changes = []
@@ -1200,11 +1419,11 @@ with tab3:
                 st.plotly_chart(fig_impact, use_container_width=True)
 
                 st.subheader("Network Before vs After")
-                st.markdown(f"**Before — Node {remove_node} present**")
+                st.markdown(f"**Before - Node {remove_node} present**")
                 html_before = build_pyvis(G_impact, comp_full.results[impact_index], valid_impact, comp_full)
                 components.html(html_before, height=620, scrolling=False)
 
-                st.markdown(f"**After — Node {remove_node} removed**")
+                st.markdown(f"**After - Node {remove_node} removed**")
                 html_after = build_pyvis(G_removed, comp_removed.results[impact_index], valid_impact, comp_removed)
                 components.html(html_after, height=620, scrolling=False)
 
@@ -1220,16 +1439,109 @@ with tab3:
                 col1.success(f"Most gained: Node {most_affected['Node']} (+{most_affected['Change']:.4f})")
                 col2.error(f"Most dropped: Node {most_dropped['Node']} ({most_dropped['Change']:.4f})")
 
-# ════════════════════════════════════════════════════════════════════════════
-# TAB 4 — ABOUT
-# ════════════════════════════════════════════════════════════════════════════
+# TAB 4 - DATA LABORATORY
 
 with tab4:
+    st.subheader("Data Laboratory")
+    st.markdown("Inspect edge data and node attributes used by the current network.")
+
+    data_view = st.selectbox(
+        "Data table",
+        ["Nodes", "Edges"],
+        key="data_laboratory_view",
+    )
+
+    if data_view == "Nodes":
+        node_rows = []
+        for node in G.nodes():
+            row = {"Node": node}
+            row.update(G.nodes[node])
+            if node in quota_values:
+                row["Selected quota"] = quota_values[node]
+            node_rows.append(row)
+
+        nodes_df = pd.DataFrame(node_rows)
+        if node_attributes_df is not None and node_id_column is not None:
+            nodes_for_merge = nodes_df.copy()
+            attrs_for_merge = node_attributes_df.copy()
+            nodes_for_merge["_node_key"] = nodes_for_merge["Node"].astype(str)
+            attrs_for_merge["_node_key"] = attrs_for_merge[node_id_column].astype(str)
+            display_df = nodes_for_merge.merge(
+                attrs_for_merge,
+                how="left",
+                on="_node_key",
+            )
+            display_df = display_df.drop(columns=["_node_key"])
+            if node_id_column in display_df.columns and node_id_column != "Node":
+                display_df = display_df.drop(columns=[node_id_column])
+            matched_rows = display_df[quota_column].notna().sum() if quota_column in display_df.columns else 0
+            if matched_rows == 0:
+                st.warning(
+                    "The attributes file is loaded, but its node ids do not match the current graph nodes. "
+                    "For Karate Club, node ids are 0, 1, 2, ..., 33. The paper example uses v1, v2, ..., v5."
+                )
+        else:
+            display_df = nodes_df
+            if any(name in QUOTA_BASED_INDICES for name in selected):
+                st.info("Upload a node attributes CSV in the sidebar to use quotas for Bundle/Pivotal indices.")
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        if quota_values:
+            st.success(f"Quota column selected: {quota_column}. Matched {len(quota_values)} of {G.number_of_nodes()} nodes.")
+        elif any(name in QUOTA_BASED_INDICES for name in selected):
+            st.warning("Quota-based indices are selected, but no usable quota values are loaded.")
+
+    else:
+        edge_rows = []
+        if G.is_multigraph():
+            for source, target, key, data in G.edges(keys=True, data=True):
+                row = {"Source": source, "Target": target, "Key": key}
+                row.update(data)
+                edge_rows.append(row)
+        else:
+            for source, target, data in G.edges(data=True):
+                row = {"Source": source, "Target": target}
+                row.update(data)
+                edge_rows.append(row)
+
+        st.dataframe(pd.DataFrame(edge_rows), use_container_width=True, hide_index=True)
+        with st.expander("Edge CSV example"):
+            st.code("source,target,weight\n0,1,2.5\n2,1,1.0\n3,2,4.1", language="text")
+
+# TAB 5 - ABOUT
+
+with tab5:
     st.subheader("About This Tool")
     st.markdown("""
     This tool provides an interactive interface for computing and comparing
     centrality indices in network structures. It supports classical, weighted,
-    and directed indices.
+    directed, directed weighted, and quota-based indices.
+    """)
+
+    st.subheader("Quota-Based Indices")
+    st.markdown("""
+    Bundle Index and Pivotal Index use node quotas. A quota is a threshold of
+    incoming influence for a node. For example, in a financial network it can
+    represent the amount of incoming loss or pressure needed to make a node
+    critical.
+
+    Bundle Index counts groups of incoming neighbors whose total edge weight
+    reaches the quota of the target node. Pivotal Index counts nodes that are
+    decisive inside these critical groups. The parameter `k` limits the maximum
+    size of a group, because checking all possible groups can become too slow
+    for nodes with many incoming links.
+    """)
+
+    st.subheader("Data Laboratory")
+    st.markdown("""
+    The Data Laboratory tab shows the data used by the current network.
+    `Edges` contains the source node, target node, and edge attributes such as
+    weight. `Nodes` contains graph nodes and, when uploaded, node attributes
+    such as quota, GDP, population, or any other user-defined columns.
+
+    Node attributes are currently required for Bundle Index and Pivotal Index,
+    because these indices need a selected quota column.
     """)
 
     st.subheader("Implemented Indices")
@@ -1355,6 +1667,18 @@ with tab4:
             "use_case": "Ranking in directed networks with weighted links.",
             "type": "Directed (weighted)"
         },
+        "Bundle Index": {
+            "formula": "BI(i) = Σ 1[Σ w(j,i) ≥ q_i], |S| ≤ k",
+            "description": "Counts incoming groups of nodes whose total edge weight reaches the quota of the target node.",
+            "use_case": "Modeling group influence when several connected actors can jointly affect a node.",
+            "type": "Quota-based"
+        },
+        "Pivotal Index": {
+            "formula": "PI(i) = Σ pivotal nodes in critical groups S",
+            "description": "Counts nodes that are decisive inside critical incoming groups: without such a node, the group no longer reaches the quota.",
+            "use_case": "Finding nodes whose participation is crucial for group influence.",
+            "type": "Quota-based"
+        },
     }
 
     about_groups = {
@@ -1378,6 +1702,7 @@ with tab4:
             "Directed Weighted Eigenvector Centrality",
             "Weighted PageRank"
         ],
+        "Quota-based": ["Bundle Index", "Pivotal Index"],
     }
 
     about_tabs = st.tabs(list(about_groups.keys()))
@@ -1385,7 +1710,7 @@ with tab4:
         with tab:
             for name in names:
                 info = indices_info[name]
-                with st.expander(f"{name} — {info['type']}"):
+                with st.expander(f"{name} - {info['type']}"):
                     st.markdown(f"**Formula:** `{info['formula']}`")
                     st.markdown(f"**Description:** {info['description']}")
                     st.markdown(f"**Use case:** {info['use_case']}")
@@ -1398,26 +1723,29 @@ with tab4:
     | Weighted Degree, Weighted Closeness, Weighted Betweenness, Weighted Eigenvector | ✅ | ❌ |
     | In-Degree, Out-Degree, Directed Closeness, Directed Betweenness, Directed Eigenvector, PageRank | ❌ | ✅ |
     | Weighted In/Out-Degree, Directed Weighted Closeness, Directed Weighted Betweenness, Directed Weighted Eigenvector, Weighted PageRank | ❌ | ✅ |
+    | Bundle Index, Pivotal Index | ✅* | ✅ |
+
+    `*` Undirected graphs are converted to reciprocal directed edges with default weight 1 when needed.
     """)
 
     st.subheader("Random Graph Models")
     st.markdown("""
     | Model | Main parameters | Typical purpose |
     |-------|-----------------|-----------------|
-    | Erdős–Rényi | number of nodes, edge probability, seed | Baseline random network with independently sampled edges |
-    | Barabási–Albert | number of nodes, edges per new node, seed | Scale-free network with preferential attachment |
-    | Watts–Strogatz | number of nodes, nearest neighbors, rewiring probability, seed | Small-world network with local clustering |
+    | Erdős-Rényi | number of nodes, edge probability, seed | Baseline random network with independently sampled edges |
+    | Barabási-Albert | number of nodes, edges per new node, seed | Scale-free network with preferential attachment |
+    | Watts-Strogatz | number of nodes, nearest neighbors, rewiring probability, seed | Small-world network with local clustering |
     | Scale-Free Directed | number of nodes, attachment probabilities, seed | Directed scale-free network for directed centrality indices |
     """)
 
     st.subheader("Tech Stack")
     st.markdown("""
     - **Python 3.9+**
-    - **NetworkX** — graph analysis
-    - **NumPy** — matrix operations
-    - **Streamlit** — web interface
-    - **Plotly** — interactive charts
-    - **Pyvis** — interactive network visualization
+    - **NetworkX** - graph analysis
+    - **NumPy** - matrix operations
+    - **Streamlit** - web interface
+    - **Plotly** - interactive charts
+    - **Pyvis** - interactive network visualization
     """)
 
     st.subheader("Author")
