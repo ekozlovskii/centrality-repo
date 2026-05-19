@@ -459,6 +459,25 @@ def score_to_color(score, max_s):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def normalize_positions(positions):
+    if not positions:
+        return positions
+
+    xs = [float(pos[0]) for pos in positions.values()]
+    ys = [float(pos[1]) for pos in positions.values()]
+    center_x = (min(xs) + max(xs)) / 2
+    center_y = (min(ys) + max(ys)) / 2
+    span = max(max(xs) - min(xs), max(ys) - min(ys), 1e-9)
+
+    return {
+        node: (
+            (float(pos[0]) - center_x) / span * 2,
+            (float(pos[1]) - center_y) / span * 2,
+        )
+        for node, pos in positions.items()
+    }
+
+
 def layout_positions(G, layout_name):
     if layout_name == "Physics simulation":
         return None
@@ -466,17 +485,17 @@ def layout_positions(G, layout_name):
     simple_graph = nx.Graph(G)
     try:
         if layout_name == "Spring layout":
-            return nx.spring_layout(simple_graph, seed=42, weight="weight")
+            return normalize_positions(nx.spring_layout(simple_graph, seed=42, weight="weight"))
         if layout_name == "Kamada-Kawai layout":
-            return nx.kamada_kawai_layout(simple_graph, weight="weight")
+            return normalize_positions(nx.kamada_kawai_layout(simple_graph, weight="weight"))
         if layout_name == "Circular layout":
-            return nx.circular_layout(simple_graph)
+            return normalize_positions(nx.circular_layout(simple_graph))
         if layout_name == "Shell layout":
-            return nx.shell_layout(simple_graph)
+            return normalize_positions(nx.shell_layout(simple_graph))
         if layout_name == "Spectral layout":
-            return nx.spectral_layout(simple_graph, weight="weight")
+            return normalize_positions(nx.spectral_layout(simple_graph, weight="weight"))
     except Exception:
-        return nx.spring_layout(simple_graph, seed=42, weight="weight")
+        return normalize_positions(nx.spring_layout(simple_graph, seed=42, weight="weight"))
 
     return None
 
@@ -492,6 +511,8 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     edge_opacity = visual_options.get("edge_opacity", 0.08 if large_mode else 0.22)
     edge_width = visual_options.get("edge_width", 0.5 if large_mode else 1.0)
     layout_name = visual_options.get("layout", "Physics simulation")
+    layout_scale = visual_options.get("layout_scale", 650)
+    auto_fit = visual_options.get("auto_fit", True)
     positions = layout_positions(G, layout_name)
     physics_enabled = positions is None
     stabilization_iterations = 400 if large_mode else 180
@@ -500,7 +521,13 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
     spring_constant = 0.035 if large_mode else 0.05
 
     max_score = max(scores.values()) if scores else 1.0
-    net = Network(height="620px", width="100%", bgcolor="#0f1117", font_color="white")
+    net = Network(
+        height="620px",
+        width="100%",
+        bgcolor="#0f1117",
+        font_color="white",
+        cdn_resources="in_line",
+    )
     
     arrows_option = '"arrows": {"to": {"enabled": true, "scaleFactor": 0.5}}' if G.is_directed() else '"arrows": {"to": {"enabled": false}}'
     
@@ -567,8 +594,8 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
         if positions is not None and node in positions:
             x, y = positions[node]
             node_kwargs.update({
-                "x": float(x) * 650,
-                "y": float(y) * 650,
+                "x": float(x) * layout_scale,
+                "y": float(y) * layout_scale,
                 "fixed": {"x": True, "y": True},
             })
 
@@ -625,6 +652,8 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
         var userInteracted = false;
         var initialFitFinished = false;
         var autoFitting = false;
+        var fitInProgress = false;
+        var autoFitEnabled = __AUTO_FIT__;
 
         function markUserInteracted() {
           if (!autoFitting) {
@@ -634,13 +663,19 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
         }
 
         function fitNetwork(force) {
-          if (userInteracted && !force) return;
-          if (initialFitFinished && !force) return;
-          if (typeof network === "undefined") return;
+          if (userInteracted && !force) return false;
+          if (initialFitFinished && !force) return false;
+          if (typeof network === "undefined") return false;
           var container = document.getElementById("mynetwork");
-          if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return;
+          if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) return false;
+          if (fitInProgress && !force) return false;
+
           autoFitting = true;
+          fitInProgress = true;
+          network.setSize("100%", "620px");
+          network.redraw();
           network.fit({
+            nodes: nodes.getIds(),
             animation: {
               duration: 350,
               easingFunction: "easeInOutQuad"
@@ -648,7 +683,11 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
           });
           setTimeout(function () {
             autoFitting = false;
-          }, 450);
+            fitInProgress = false;
+            initialFitFinished = true;
+            window.__centralityInitialFitDone = true;
+          }, 900);
+          return true;
         }
 
         if (typeof network !== "undefined") {
@@ -657,32 +696,55 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
           network.on("selectNode", markUserInteracted);
 
           network.once("stabilizationIterationsDone", function () {
-            fitNetwork(true);
-            setTimeout(function () {
+            if (!autoFitEnabled) {
               network.setOptions({ physics: false });
               initialFitFinished = true;
+              window.__centralityInitialFitDone = true;
+              return;
+            }
+            var fitted = userInteracted ? false : fitNetwork(true);
+            setTimeout(function () {
+              network.setOptions({ physics: false });
+              if (!fitted && !userInteracted) {
+                fitNetwork(false);
+              }
             }, 900);
           });
           network.on("afterDrawing", function () {
+            if (!autoFitEnabled) return;
             if (!window.__centralityInitialFitDone) {
-              window.__centralityInitialFitDone = true;
-              setTimeout(function () { fitNetwork(false); }, 250);
+              setTimeout(function () {
+                fitNetwork(false);
+              }, 250);
             }
           });
         }
 
         window.addEventListener("load", function () {
+          if (!autoFitEnabled) return;
           setTimeout(function () {
             fitNetwork(false);
-            initialFitFinished = true;
           }, 1200);
         });
+        var fitAttempts = 0;
+        var fitTimer = setInterval(function () {
+          if (!autoFitEnabled) {
+            clearInterval(fitTimer);
+            return;
+          }
+          fitAttempts += 1;
+          if (initialFitFinished || userInteracted || fitNetwork(false) || fitAttempts > 40) {
+            clearInterval(fitTimer);
+          }
+        }, 250);
         window.addEventListener("resize", function () {
+          if (!autoFitEnabled) return;
           if (!userInteracted) {
             setTimeout(function () { fitNetwork(false); }, 150);
           }
         });
         document.addEventListener("mouseenter", function () {
+          if (!autoFitEnabled) return;
           if (!initialFitFinished && !userInteracted) {
             setTimeout(function () { fitNetwork(false); }, 100);
           }
@@ -690,9 +752,117 @@ def build_pyvis(G, scores, selected, comp, highlight=None, visual_options=None):
       })();
     </script>
     """
+    fit_script = fit_script.replace("__AUTO_FIT__", str(auto_fit).lower())
     html_content = html_content.replace("</head>", graph_style + "\n</head>")
     html_content = html_content.replace("</body>", fit_script + "\n</body>")
     return html_content
+
+
+def graph_display_controls(G, key_prefix, score_label=None, default_layout="Physics simulation"):
+    large_mode = G.number_of_nodes() > 100 or G.number_of_edges() > 300
+    layout_options = [
+        "Physics simulation",
+        "Spring layout",
+        "Kamada-Kawai layout",
+        "Circular layout",
+        "Shell layout",
+        "Spectral layout",
+    ]
+    default_layout_index = layout_options.index(default_layout)
+
+    col_graph1, col_graph2, col_graph3 = st.columns([3, 2, 2])
+    with col_graph1:
+        if score_label:
+            st.markdown(f"Node size and color reflect **{score_label}** centrality.")
+    with col_graph2:
+        filter_top = st.slider(
+            "Show top N nodes",
+            min_value=1,
+            max_value=G.number_of_nodes(),
+            value=min(G.number_of_nodes(), 80) if large_mode else G.number_of_nodes(),
+            step=1,
+            key=f"{key_prefix}_filter_top",
+        )
+    with col_graph3:
+        highlight_node = st.text_input(
+            "Highlight node",
+            value="",
+            placeholder="e.g. 0",
+            key=f"{key_prefix}_highlight",
+        )
+
+    with st.expander("Graph display settings", expanded=large_mode):
+        col_layout, col_v1, col_v2 = st.columns([2, 1, 1])
+        with col_layout:
+            graph_layout = st.selectbox(
+                "Layout",
+                layout_options,
+                index=default_layout_index,
+                key=f"{key_prefix}_layout",
+            )
+        with col_v1:
+            use_large_mode = st.checkbox(
+                "Large graph mode",
+                value=large_mode,
+                help="Reduces node size, edge opacity, and freezes physics after layout stabilization.",
+                key=f"{key_prefix}_large_mode",
+            )
+        with col_v2:
+            show_labels = st.checkbox(
+                "Show node labels",
+                value=not large_mode,
+                key=f"{key_prefix}_show_labels",
+            )
+        col_v3, col_v4 = st.columns(2)
+        with col_v3:
+            show_edges = st.checkbox(
+                "Show edges",
+                value=True,
+                key=f"{key_prefix}_show_edges",
+            )
+        with col_v4:
+            node_scale = st.slider(
+                "Node size",
+                min_value=0.4,
+                max_value=1.4,
+                value=0.65 if large_mode else 1.0,
+                step=0.05,
+                key=f"{key_prefix}_node_scale",
+            )
+        edge_opacity = st.slider(
+            "Edge opacity",
+            min_value=0.02,
+            max_value=0.35,
+            value=0.08 if large_mode else 0.22,
+            step=0.01,
+            key=f"{key_prefix}_edge_opacity",
+        )
+        if G.number_of_nodes() > 120 and filter_top == G.number_of_nodes():
+            st.info("For large graphs, filtering to top nodes or hiding labels usually makes the network easier to read.")
+
+    visual_options = {
+        "large_mode": use_large_mode,
+        "show_labels": show_labels,
+        "show_edges": show_edges,
+        "node_scale": node_scale,
+        "edge_opacity": edge_opacity,
+        "layout": graph_layout,
+    }
+    return visual_options, filter_top, highlight_node
+
+
+def filter_graph_by_scores(G, scores, filter_top):
+    top_nodes = set(
+        node for node, _ in sorted(scores.items(), key=lambda x: -x[1])[:filter_top]
+    )
+    return G.subgraph(top_nodes).copy(), {node: scores[node] for node in top_nodes}
+
+
+def parse_highlight_node(highlight_node):
+    try:
+        return int(highlight_node) if highlight_node else None
+    except ValueError:
+        return highlight_node if highlight_node else None
 
 # TAB 1 - ANALYSIS
 
@@ -871,90 +1041,15 @@ with tab1:
                 st.plotly_chart(fig_dist, use_container_width=True)
 
                 st.subheader("Interactive Network Graph")
-                large_graph_default = G.number_of_nodes() > 100 or G.number_of_edges() > 300
-                col_graph1, col_graph2, col_graph3 = st.columns([3, 2, 2])
-                with col_graph1:
-                    st.markdown(f"Node size and color reflect **{valid_selected[0]}** centrality.")
-                with col_graph2:
-                    filter_top = st.slider(
-                        "Show top N nodes",
-                        min_value=1,
-                        max_value=G.number_of_nodes(),
-                        value=min(G.number_of_nodes(), 80) if large_graph_default else G.number_of_nodes(),
-                        step=1
-                    )
-                with col_graph3:
-                    highlight_node = st.text_input(
-                        "Highlight node",
-                        value="",
-                        placeholder="e.g. 0"
-                    )
-
-                with st.expander("Graph display settings", expanded=large_graph_default):
-                    col_layout, col_v1, col_v2 = st.columns([2, 1, 1])
-                    with col_layout:
-                        graph_layout = st.selectbox(
-                            "Layout",
-                            [
-                                "Physics simulation",
-                                "Spring layout",
-                                "Kamada-Kawai layout",
-                                "Circular layout",
-                                "Shell layout",
-                                "Spectral layout",
-                            ],
-                            index=0,
-                        )
-                    with col_v1:
-                        large_mode = st.checkbox(
-                            "Large graph mode",
-                            value=large_graph_default,
-                            help="Reduces node size, edge opacity, and freezes physics after layout stabilization.",
-                        )
-                    with col_v2:
-                        show_labels = st.checkbox(
-                            "Show node labels",
-                            value=not large_graph_default,
-                        )
-                    col_v3, col_v4 = st.columns(2)
-                    with col_v3:
-                        show_edges = st.checkbox(
-                            "Show edges",
-                            value=True,
-                        )
-                    with col_v4:
-                        node_scale = st.slider(
-                            "Node size",
-                            min_value=0.4,
-                            max_value=1.4,
-                            value=0.65 if large_graph_default else 1.0,
-                            step=0.05,
-                        )
-                    edge_opacity = st.slider(
-                        "Edge opacity",
-                        min_value=0.02,
-                        max_value=0.35,
-                        value=0.08 if large_graph_default else 0.22,
-                        step=0.01,
-                    )
-                    if G.number_of_nodes() > 120 and filter_top == G.number_of_nodes():
-                        st.info("For large graphs, filtering to top nodes or hiding labels usually makes the network easier to read.")
-
-                visual_options = {
-                    "large_mode": large_mode,
-                    "show_labels": show_labels,
-                    "show_edges": show_edges,
-                    "node_scale": node_scale,
-                    "edge_opacity": edge_opacity,
-                    "layout": graph_layout,
-                }
+                visual_options, filter_top, highlight_node = graph_display_controls(
+                    G,
+                    "analysis_graph",
+                    score_label=valid_selected[0],
+                    default_layout="Physics simulation",
+                )
 
                 scores = comp.results[valid_selected[0]]
-                top_nodes_filter = set(
-                    node for node, _ in sorted(scores.items(), key=lambda x: -x[1])[:filter_top]
-                )
-                G_filtered = G.subgraph(top_nodes_filter).copy()
-                scores_filtered = {node: scores[node] for node in top_nodes_filter}
+                G_filtered, scores_filtered = filter_graph_by_scores(G, scores, filter_top)
 
                 comp_filtered = CentralityComparator()
                 for name in valid_selected:
@@ -979,10 +1074,7 @@ with tab1:
 
                 st.markdown(f"Showing **{filter_top}** of **{G.number_of_nodes()}** nodes.")
 
-                try:
-                    hl = int(highlight_node) if highlight_node else None
-                except ValueError:
-                    hl = highlight_node if highlight_node else None
+                hl = parse_highlight_node(highlight_node)
 
                 html_content = build_pyvis(
                     G_filtered,
@@ -1298,12 +1390,45 @@ with tab2:
                 st.info("No common compatible indices are available for both selected networks.")
 
             st.subheader("Network Graphs")
+            compare_control_graph = GA if GA.number_of_nodes() >= GB.number_of_nodes() else GB
+            compare_graph_options, compare_filter_top, compare_highlight = graph_display_controls(
+                compare_control_graph,
+                "compare_graphs",
+                score_label=valid_a[0],
+                default_layout="Spring layout",
+            )
+            compare_highlight_node = parse_highlight_node(compare_highlight)
+
             st.markdown(f"**{graph_a}**")
-            html_a = build_pyvis(GA, comp_a.results[valid_a[0]], valid_a, comp_a)
+            GA_view, scores_a_view = filter_graph_by_scores(
+                GA,
+                comp_a.results[valid_a[0]],
+                min(compare_filter_top, GA.number_of_nodes()),
+            )
+            html_a = build_pyvis(
+                GA_view,
+                scores_a_view,
+                valid_a,
+                comp_a,
+                highlight=compare_highlight_node,
+                visual_options=compare_graph_options,
+            )
             components.html(html_a, height=620, scrolling=False)
 
             st.markdown(f"**{graph_b}**")
-            html_b = build_pyvis(GB, comp_b.results[valid_b[0]], valid_b, comp_b)
+            GB_view, scores_b_view = filter_graph_by_scores(
+                GB,
+                comp_b.results[valid_b[0]],
+                min(compare_filter_top, GB.number_of_nodes()),
+            )
+            html_b = build_pyvis(
+                GB_view,
+                scores_b_view,
+                valid_b,
+                comp_b,
+                highlight=compare_highlight_node,
+                visual_options=compare_graph_options,
+            )
             components.html(html_b, height=620, scrolling=False)
 
 # TAB 3 - NODE IMPACT
@@ -1419,12 +1544,44 @@ with tab3:
                 st.plotly_chart(fig_impact, use_container_width=True)
 
                 st.subheader("Network Before vs After")
+                impact_graph_options, impact_filter_top, impact_highlight = graph_display_controls(
+                    G_impact,
+                    "impact_graphs",
+                    score_label=impact_index,
+                    default_layout="Spring layout",
+                )
+                impact_highlight_node = parse_highlight_node(impact_highlight)
+
                 st.markdown(f"**Before - Node {remove_node} present**")
-                html_before = build_pyvis(G_impact, comp_full.results[impact_index], valid_impact, comp_full)
+                G_impact_view, scores_impact_view = filter_graph_by_scores(
+                    G_impact,
+                    comp_full.results[impact_index],
+                    min(impact_filter_top, G_impact.number_of_nodes()),
+                )
+                html_before = build_pyvis(
+                    G_impact_view,
+                    scores_impact_view,
+                    valid_impact,
+                    comp_full,
+                    highlight=impact_highlight_node,
+                    visual_options=impact_graph_options,
+                )
                 components.html(html_before, height=620, scrolling=False)
 
                 st.markdown(f"**After - Node {remove_node} removed**")
-                html_after = build_pyvis(G_removed, comp_removed.results[impact_index], valid_impact, comp_removed)
+                G_removed_view, scores_removed_view = filter_graph_by_scores(
+                    G_removed,
+                    comp_removed.results[impact_index],
+                    min(impact_filter_top, G_removed.number_of_nodes()),
+                )
+                html_after = build_pyvis(
+                    G_removed_view,
+                    scores_removed_view,
+                    valid_impact,
+                    comp_removed,
+                    highlight=impact_highlight_node,
+                    visual_options=impact_graph_options,
+                )
                 components.html(html_after, height=620, scrolling=False)
 
                 st.subheader("Full Change Table")
